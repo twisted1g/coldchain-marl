@@ -24,6 +24,14 @@ EDGE_BASE_EMISSIONS_PER_KM: Final[float] = 0.12
 WAIT_EDGE_TRANSIT_TIME: Final[int] = 1
 WAIT_EDGE_EMISSIONS: Final[float] = 0.0
 
+N_NEXT_NODES: Final[int] = 4
+N_RISK_LEVELS: Final[int] = 3
+N_DELIVERY_WINDOWS: Final[int] = 4
+TEMPERATURE_ACTION_LOW_C: Final[float] = -30.0
+TEMPERATURE_ACTION_HIGH_C: Final[float] = 30.0
+INVENTORY_ACTION_LOW: Final[float] = 0.0
+INVENTORY_ACTION_HIGH: Final[float] = 1.0
+
 
 class FruitKey(str, Enum):
     STRAWBERRY = "strawberry"
