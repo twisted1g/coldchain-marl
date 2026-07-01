@@ -9,3 +9,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Generated datasets (regenerate from seed)
+data/dataset/
+data/run*/
+
+# Jupyter
+.ipynb_checkpoints/

@@ -19,3 +19,11 @@ dev = [
     "mypy>=2.1.0",
     "ruff>=0.15.20",
 ]
+notebook = [
+    "ipykernel>=7.3.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.11.0",
+    "nbclient>=0.11.0",
+    "nbformat>=5.10.4",
+    "pandas>=3.0.4",
+]
