@@ -79,7 +79,11 @@ class GlobalState:
     fault_signals: int
 
 
-def init_state(seed: int | None = None, max_steps: int | None = None) -> GlobalState:
+def init_state(
+    seed: int | None = None,
+    max_steps: int | None = None,
+    fruit: FruitKey | None = None,
+) -> GlobalState:
     rng = np.random.default_rng(config.DEFAULT_SEED if seed is None else seed)
     n_steps = (
         max_steps
@@ -89,7 +93,7 @@ def init_state(seed: int | None = None, max_steps: int | None = None) -> GlobalS
     graph = build_supply_chain(rng)
 
     fruits = list(FruitKey)
-    fruit = fruits[int(rng.integers(0, len(fruits)))]
+    fruit = fruit if fruit is not None else fruits[int(rng.integers(0, len(fruits)))]
     source = str(rng.choice(source_nodes(graph)))
     target = str(rng.choice(sink_nodes(graph)))
 
