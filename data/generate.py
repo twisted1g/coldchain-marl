@@ -81,6 +81,27 @@ def _config_snapshot() -> dict[str, Any]:
     return snapshot
 
 
+_TRACKED_PACKAGES: tuple[str, ...] = (
+    "gymnasium",
+    "networkx",
+    "numpy",
+    "pettingzoo",
+    "ray",
+    "torch",
+    "torch-geometric",
+)
+
+
+def _resolved_versions() -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for name in _TRACKED_PACKAGES:
+        try:
+            versions[name] = md.version(name)
+        except md.PackageNotFoundError:
+            versions[name] = "not-installed"
+    return versions
+
+
 def _hash_episodes(episodes: list[EpisodeRecord]) -> str:
     h = hashlib.sha256()
     for ep in episodes:
@@ -110,6 +131,7 @@ def generate(master_seed: int, n_episodes: int, out_dir: Path) -> DatasetManifes
     manifest = DatasetManifest(
         master_seed=master_seed,
         n_episodes=n_episodes,
+        library_versions=_resolved_versions(),
         dataset_sha256=_hash_episodes(episodes),
         config_snapshot=_config_snapshot(),
     )
@@ -122,11 +144,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic cold-chain episodes.")
     parser.add_argument("--seed", type=int, default=config.DEFAULT_SEED)
     parser.add_argument("--episodes", type=int, default=config.N_EPISODES_DEFAULT)
-    parser.add_argument("--out", type=Path, default=Path("data/dataset"))
+    parser.add_argument("--out", type=Path, default=Path("./dataset"))
     args = parser.parse_args()
-
     manifest = generate(args.seed, args.episodes, args.out)
-    print(
-        f"generated {manifest.n_episodes} episodes  "
-        f"seed={manifest.master_seed}  sha256={manifest.dataset_sha256[:12]}...  out={args.out}"
-    )
+    print(f"Generated {manifest.n_episodes} episodes → {args.out}")
+    print(f"dataset_sha256={manifest.dataset_sha256[:16]}...")
+
+
+if __name__ == "__main__":
+    main()
