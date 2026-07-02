@@ -8,33 +8,42 @@ from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 from ray.tune.registry import register_env
 
-from training.env import TemperatureTrainingEnv
+from core.config import OBS_FIELDS_BY_AGENT
+from training.env import ColdChainTrainingEnv
 from training.module import FixedActionRLModule
 
 SEED = 0
 NUM_ITERATIONS = 25
 EVAL_EPISODES = 10
 
-LEARNER = "temperature"
-FROZEN = ["routing", "spoilage", "inventory", "delivery"]
-ENV_NAME = "coldchain_temperature"
+AGENTS = list(OBS_FIELDS_BY_AGENT)
+# PHASE 3b: add continuous-action agents here (e.g. "inventory") to train them.
+LEARNERS = ["temperature"]
+FROZEN = [a for a in AGENTS if a not in LEARNERS]
+ENV_NAME = "coldchain_training"
 
-ENV_CONFIG = {"fruit": "strawberry", "max_steps": 20, "base_seed": 1000}
+ENV_CONFIG = {"fruit": "strawberry", "max_steps": 20, "base_seed": 1000, "learners": LEARNERS}
 EVAL_ENV_CONFIG = {**ENV_CONFIG, "base_seed": 90_000}
 COMPARE_ENV_CONFIG = {**ENV_CONFIG, "base_seed": 500_000}
 
 ARTIFACTS = Path(__file__).resolve().parent.parent / "artifacts"
-MODULE_DIR = ARTIFACTS / "temp_skeleton_module"
-CURVE_CSV = ARTIFACTS / "temp_skeleton_reward_curve.csv"
-CURVE_PNG = ARTIFACTS / "temp_skeleton_reward_curve.png"
+MODULES_DIR = ARTIFACTS / "modules"
+CURVE_CSV = ARTIFACTS / "reward_curve.csv"
+
+
+def module_dir(agent: str) -> Path:
+    return MODULES_DIR / agent
 
 
 def build_config() -> SACConfig:
-    register_env(ENV_NAME, lambda cfg: ParallelPettingZooEnv(TemperatureTrainingEnv(cfg)))
+    register_env(ENV_NAME, lambda cfg: ParallelPettingZooEnv(ColdChainTrainingEnv(cfg)))
 
-    module_specs = {LEARNER: RLModuleSpec(model_config={"fcnet_hiddens": [64, 64]})}
-    for agent in FROZEN:
-        module_specs[agent] = RLModuleSpec(module_class=FixedActionRLModule)
+    module_specs = {}
+    for agent in AGENTS:
+        if agent in LEARNERS:
+            module_specs[agent] = RLModuleSpec(model_config={"fcnet_hiddens": [64, 64]})
+        else:
+            module_specs[agent] = RLModuleSpec(module_class=FixedActionRLModule)
 
     return (
         SACConfig()
@@ -42,11 +51,9 @@ def build_config() -> SACConfig:
         .framework("torch")
         .env_runners(num_env_runners=0, rollout_fragment_length=1)
         .multi_agent(
-            policies={LEARNER, *FROZEN},
+            policies=set(AGENTS),
             policy_mapping_fn=lambda agent_id, *a, **k: agent_id,
-            # PHASE 3b: add the frozen agents here and swap their FixedActionRLModule
-            # specs for trainable RLModuleSpec()s to unfreeze them.
-            policies_to_train=[LEARNER],
+            policies_to_train=LEARNERS,
         )
         .training(
             num_steps_sampled_before_learning_starts=256,
