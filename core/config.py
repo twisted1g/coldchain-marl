@@ -7,6 +7,8 @@ from typing import Final
 N_EPISODES_FULL: Final[int] = 10_000
 N_EPISODES_DEFAULT: Final[int] = 200
 
+# Random episode length for the offline synthetic dataset. Distinct from the fixed
+# training cap env.training_env.DEFAULT_MAX_STEPS.
 EPISODE_LEN_MIN: Final[int] = 10
 EPISODE_LEN_MAX: Final[int] = 20
 
