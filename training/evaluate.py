@@ -9,7 +9,7 @@ import torch
 from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module import RLModule
 
-from training.env import ColdChainTrainingEnv
+from env.training_env import ColdChainTrainingEnv
 
 ActionFn = Callable[[dict], dict]
 

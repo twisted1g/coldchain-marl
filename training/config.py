@@ -9,7 +9,7 @@ from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 from ray.tune.registry import register_env
 
 from core.config import OBS_FIELDS_BY_AGENT
-from training.env import ColdChainTrainingEnv
+from env.training_env import ColdChainTrainingEnv
 from training.module import FixedActionRLModule
 
 SEED = 0

@@ -15,7 +15,7 @@ from training.config import (
     build_config,
     module_dir,
 )
-from training.env import ColdChainTrainingEnv
+from env.training_env import ColdChainTrainingEnv
 from training.evaluate import greedy_action_fn, rollout
 
 
