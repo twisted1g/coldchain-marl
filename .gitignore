@@ -17,3 +17,7 @@ data/run*/
 
 # Jupyter
 .ipynb_checkpoints/
+
+
+
+.paper.pdf

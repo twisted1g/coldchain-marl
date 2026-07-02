@@ -15,6 +15,10 @@ dependencies = [
     "torchrl>=0.13.2",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Notebooks bootstrap sys.path before importing project modules.
+"notebooks/*.ipynb" = ["E402"]
+
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",
