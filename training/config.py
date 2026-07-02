@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 
 from core.config import OBS_FIELDS_BY_AGENT
-from env.training_env import ColdChainTrainingEnv
+from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
 from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent
 
 SEED = 0
@@ -25,7 +25,6 @@ METRIC = {"temperature": ("temp_deviation", "min"), "routing": ("route_cost", "m
 LEARNERS = ["temperature"]
 
 FRUIT = "banana"
-MAX_STEPS = 20
 TRAIN_SEED = 1000
 EVAL_SEED = 90_000
 COMPARE_SEED = 500_000
@@ -66,7 +65,7 @@ def module_dir(agent: str) -> Path:
 
 
 def env_config(base_seed: int, learners: list[str]) -> dict[str, Any]:
-    return {"fruit": FRUIT, "max_steps": MAX_STEPS, "base_seed": base_seed, "learners": list(learners)}
+    return {"fruit": FRUIT, "max_steps": DEFAULT_MAX_STEPS, "base_seed": base_seed, "learners": list(learners)}
 
 
 def _build_learner(agent: str, env: ColdChainTrainingEnv) -> Agent:
