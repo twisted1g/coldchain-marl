@@ -9,9 +9,10 @@ dependencies = [
     "networkx>=3.6.1",
     "numpy>=2.5.0",
     "pettingzoo>=1.26.1",
-    "ray[rllib]>=2.55.1",
+    "tensordict>=0.13.0",
     "torch>=2.12.1",
     "torch-geometric>=2.8.0",
+    "torchrl>=0.13.2",
 ]
 
 [dependency-groups]

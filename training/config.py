@@ -1,30 +1,60 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from ray.rllib.algorithms.sac import SACConfig
-from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
-from ray.rllib.core.rl_module.rl_module import RLModuleSpec
-from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
-from ray.tune.registry import register_env
+import numpy as np
 
 from core.config import OBS_FIELDS_BY_AGENT
 from env.training_env import ColdChainTrainingEnv
-from training.module import FixedActionRLModule
+from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent
 
 SEED = 0
 NUM_ITERATIONS = 25
+EPISODES_PER_ITERATION = 10
 EVAL_EPISODES = 10
 
 AGENTS = list(OBS_FIELDS_BY_AGENT)
-# PHASE 3b: add continuous-action agents here (e.g. "inventory") to train them.
-LEARNERS = ["temperature"]
-FROZEN = [a for a in AGENTS if a not in LEARNERS]
-ENV_NAME = "coldchain_training"
+# Algorithm per agent (paper Section 4.3, hybrid heterogeneous policy design).
+# routing: paper uses tabular Q-learning; impl uses DQN for stack compatibility.
+ALGO = {"temperature": "DDPG", "routing": "DQN"}
+# (metric_key emitted in infos, direction) per learner, for sanity checks.
+METRIC = {"temperature": ("temp_deviation", "min"), "routing": ("route_cost", "min")}
 
-ENV_CONFIG = {"fruit": "strawberry", "max_steps": 20, "base_seed": 1000, "learners": LEARNERS}
-EVAL_ENV_CONFIG = {**ENV_CONFIG, "base_seed": 90_000}
-COMPARE_ENV_CONFIG = {**ENV_CONFIG, "base_seed": 500_000}
+# Learners trained this run; override via `train.py --agents`. Rest stay frozen.
+LEARNERS = ["temperature"]
+
+FRUIT = "banana"
+MAX_STEPS = 20
+TRAIN_SEED = 1000
+EVAL_SEED = 90_000
+COMPARE_SEED = 500_000
+
+DDPG_CFG: dict[str, Any] = {
+    "hidden": [64, 64],
+    "lr": 3e-4,
+    "gamma": 0.99,
+    "tau": 0.005,
+    "batch_size": 256,
+    "buffer_capacity": 100_000,
+    "warmup": 256,
+    "noise_sigma": 0.1,
+}
+
+DQN_CFG: dict[str, Any] = {
+    "hidden": [64, 64],
+    "lr": 1e-3,
+    "gamma": 0.99,
+    "tau": 0.005,
+    "batch_size": 256,
+    "buffer_capacity": 100_000,
+    "warmup": 256,
+    "eps_start": 1.0,
+    "eps_end": 0.05,
+    "eps_decay_steps": 2000,
+}
+
+ALGO_CFG = {"DDPG": DDPG_CFG, "DQN": DQN_CFG}
 
 ARTIFACTS = Path(__file__).resolve().parent.parent / "artifacts"
 MODULES_DIR = ARTIFACTS / "modules"
@@ -35,36 +65,34 @@ def module_dir(agent: str) -> Path:
     return MODULES_DIR / agent
 
 
-def build_config() -> SACConfig:
-    register_env(ENV_NAME, lambda cfg: ParallelPettingZooEnv(ColdChainTrainingEnv(cfg)))
+def env_config(base_seed: int, learners: list[str]) -> dict[str, Any]:
+    return {"fruit": FRUIT, "max_steps": MAX_STEPS, "base_seed": base_seed, "learners": list(learners)}
 
-    module_specs = {}
+
+def _build_learner(agent: str, env: ColdChainTrainingEnv) -> Agent:
+    obs_dim = int(np.prod(env.observation_space(agent).shape))
+    algo = ALGO[agent]
+    if algo == "DDPG":
+        return DDPGAgent(obs_dim, env.action_space(agent), ALGO_CFG["DDPG"])
+    if algo == "DQN":
+        return DQNAgent(obs_dim, env.action_space(agent), ALGO_CFG["DQN"])
+    raise NotImplementedError(f"Algorithm {algo!r} for agent {agent!r} not implemented yet")
+
+
+def build_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Agent]:
+    """All agents for the CTDE loop: learners get their algorithm, rest frozen."""
+    agents: dict[str, Agent] = {}
     for agent in AGENTS:
-        if agent in LEARNERS:
-            module_specs[agent] = RLModuleSpec(model_config={"fcnet_hiddens": [64, 64]})
+        if agent in learners:
+            agents[agent] = _build_learner(agent, env)
         else:
-            module_specs[agent] = RLModuleSpec(module_class=FixedActionRLModule)
+            agents[agent] = FrozenAgent(env.action_space(agent))
+    return agents
 
-    return (
-        SACConfig()
-        .environment(ENV_NAME, env_config=ENV_CONFIG)
-        .framework("torch")
-        .env_runners(num_env_runners=0, rollout_fragment_length=1)
-        .multi_agent(
-            policies=set(AGENTS),
-            policy_mapping_fn=lambda agent_id, *a, **k: agent_id,
-            policies_to_train=LEARNERS,
-        )
-        .training(
-            num_steps_sampled_before_learning_starts=256,
-            target_network_update_freq=1,
-            replay_buffer_config={
-                "type": "MultiAgentPrioritizedEpisodeReplayBuffer",
-                "capacity": 100_000,
-                "alpha": 0.6,
-                "beta": 0.4,
-            },
-        )
-        .rl_module(rl_module_spec=MultiRLModuleSpec(rl_module_specs=module_specs))
-        .debugging(seed=SEED)
-    )
+
+def load_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Agent]:
+    """Frozen backdrop with trained learner modules loaded from artifacts."""
+    agents = build_agents(env, learners)
+    for agent in learners:
+        agents[agent].load(module_dir(agent))
+    return agents
