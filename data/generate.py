@@ -13,7 +13,8 @@ from typing import Any
 import numpy as np
 
 from core import config
-from core.dynamics import ACTION_SPACES, step
+from core.dynamics import step
+from core.spaces import ACTION_SPACES
 from core.state import init_state
 from data.schema import DatasetManifest, EpisodeRecord, StepRecord
 
