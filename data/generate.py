@@ -87,9 +87,10 @@ _TRACKED_PACKAGES: tuple[str, ...] = (
     "networkx",
     "numpy",
     "pettingzoo",
-    "ray",
+    "tensordict",
     "torch",
     "torch-geometric",
+    "torchrl",
 )
 
 
