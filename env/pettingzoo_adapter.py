@@ -6,8 +6,10 @@ import gymnasium as gym
 from pettingzoo import ParallelEnv
 
 from core.config import FruitKey
-from core.dynamics import make_action_spaces, step
-from core.state import GlobalState, extract_all_obs, init_state, make_observation_spaces
+from core.dynamics import step
+from core.observations import all_obs
+from core.spaces import make_action_spaces, make_observation_spaces
+from core.state import GlobalState, init_state
 
 
 class ColdChainParallelEnv(ParallelEnv):
@@ -42,7 +44,7 @@ class ColdChainParallelEnv(ParallelEnv):
         active_seed = seed if seed is not None else self._seed
         self._state = init_state(seed=active_seed, max_steps=self._max_steps, fruit=self._fruit)
         self.agents = list(self.possible_agents)
-        observations = extract_all_obs(self._state)
+        observations = all_obs(self._state)
         infos = {agent: {} for agent in self.possible_agents}
         return observations, infos
 
