@@ -19,6 +19,12 @@ ENERGY_WEIGHT = 1.0
 SPOILAGE_WEIGHT = 25.0
 STEP_PENALTY = 0.01
 
+# Routing (paper Algorithm 1): penalize travel time, emissions, spoilage risk
+# accrued on the route. Fixed weights; PHASE 4: context-aware Pareto weights.
+ROUTE_TIME_WEIGHT = 1.0
+ROUTE_EMISSIONS_WEIGHT = 0.5
+ROUTE_RISK_WEIGHT = 10.0
+
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
 
@@ -39,7 +45,10 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             max_steps=config.get("max_steps", DEFAULT_MAX_STEPS),
             fruit=FruitKey(config.get("fruit", DEFAULT_FRUIT)),
         )
-        supported: dict[str, RewardMethod] = {"temperature": self._temperature_reward}
+        supported: dict[str, RewardMethod] = {
+            "temperature": self._temperature_reward,
+            "routing": self._routing_reward,
+        }
         learners = config.get("learners", DEFAULT_LEARNERS)
         self._reward_methods = {a: supported[a] for a in learners}
         self._episode_index = 0
@@ -48,7 +57,11 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
         obs, infos = super().reset(seed=self._base_seed + self._episode_index)
         self._episode_index += 1
-        self._prev = {"spoilage_risk": self._state.shipment.spoilage_risk}
+        self._prev = {
+            "spoilage_risk": self._state.shipment.spoilage_risk,
+            "route_travel_time": self._state.route_travel_time,
+            "route_emissions": self._state.route_emissions,
+        }
         return obs, infos
 
     def step(self, actions: dict[str, Any]):
@@ -58,6 +71,8 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             rewards[agent] = reward
             infos[agent].update(metrics)
         self._prev["spoilage_risk"] = self._state.shipment.spoilage_risk
+        self._prev["route_travel_time"] = self._state.route_travel_time
+        self._prev["route_emissions"] = self._state.route_emissions
         return obs, rewards, terminated, truncated, infos
 
     def _temperature_reward(self) -> tuple[float, dict[str, float]]:
@@ -70,3 +85,14 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         ideal = (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
         deviation = abs(s.sensor_temperature_c - ideal)
         return reward, {"temp_deviation": deviation}
+
+    def _routing_reward(self) -> tuple[float, dict[str, float]]:
+        dt_time = self._state.route_travel_time - self._prev["route_travel_time"]
+        dt_emissions = self._state.route_emissions - self._prev["route_emissions"]
+        risk = self._state.shipment.spoilage_risk
+        cost = (
+            ROUTE_TIME_WEIGHT * dt_time
+            + ROUTE_EMISSIONS_WEIGHT * dt_emissions
+            + ROUTE_RISK_WEIGHT * risk
+        )
+        return -cost, {"route_cost": cost}

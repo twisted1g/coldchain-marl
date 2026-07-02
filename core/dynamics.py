@@ -67,17 +67,19 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
 def _apply_routing_action(state: GlobalState, action: Any) -> None:
     if action is None:
         return
-    edges = list(state.graph.out_edges(state.shipment.current_node))
+    edges = list(state.graph.out_edges(state.shipment.current_node, data=True))
     if not edges:
         return
     idx = int(action) % len(edges)
-    _, target = edges[idx]
+    _, target, data = edges[idx]
     blocked = any(
         d.type is DisruptionType.BLOCKED_NODE and d.target == target
         for d in state.active_disruptions
     )
     if blocked:
         return
+    state.route_travel_time += float(data["base_transit_time"])
+    state.route_emissions += float(data["base_emissions"])
     state.shipment.current_node = target
 
 
