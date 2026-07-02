@@ -69,10 +69,6 @@ def _add_wait_edge(graph: nx.DiGraph, node: str) -> None:
     )
 
 
-def has_route(graph: nx.DiGraph, source: str, target: str) -> bool:
-    return nx.has_path(graph, source, target)
-
-
 def nodes_by_kind(graph: nx.DiGraph, kind: NodeKind) -> list[str]:
     return [n for n, data in graph.nodes(data=True) if data["kind"] == kind]
 
@@ -83,11 +79,3 @@ def source_nodes(graph: nx.DiGraph) -> list[str]:
 
 def sink_nodes(graph: nx.DiGraph) -> list[str]:
     return nodes_by_kind(graph, "retail")
-
-
-def outgoing_transport_edges(graph: nx.DiGraph, node: str) -> list[tuple[str, str]]:
-    return [
-        (u, v)
-        for u, v, data in graph.out_edges(node, data=True)
-        if not data["wait"]
-    ]

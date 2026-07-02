@@ -20,13 +20,6 @@ class NoiseModel:
     def __init__(self, rng: np.random.Generator) -> None:
         self._rng = rng
 
-    def demand_noise(self, base: float) -> float:
-        factor = 1.0 + float(self._rng.normal(0.0, config.DEMAND_NOISE_SIGMA))
-        return base * factor
-
-    def transit_delay_noise(self, base: float) -> float:
-        return base + float(self._rng.normal(0.0, config.TRANSIT_DELAY_NOISE_SIGMA))
-
     def sample_disruption(self, graph: nx.DiGraph) -> Disruption | None:
         if self._rng.random() > config.DISRUPTION_PROB_PER_TICK:
             return None

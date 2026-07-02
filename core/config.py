@@ -61,9 +61,6 @@ DISRUPTION_TYPE_WEIGHTS: Final[dict[DisruptionType, float]] = {
 
 DISRUPTION_TRANSIT_DELTA_RANGE: Final[tuple[int, int]] = (1, 3)
 
-DEMAND_NOISE_SIGMA: Final[float] = 0.10
-TRANSIT_DELAY_NOISE_SIGMA: Final[float] = 0.25
-
 
 class Weather(str, Enum):
     SUNNY = "sunny"
@@ -78,16 +75,6 @@ WEATHER_PRIORS: Final[dict[Weather, float]] = {
     Weather.RAINY: 0.15,
     Weather.STORMY: 0.05,
 }
-
-
-class AmbientTempBucket(str, Enum):
-    COLD = "cold"
-    MILD = "mild"
-    WARM = "warm"
-    HOT = "hot"
-
-
-AMBIENT_TEMP_BUCKET_EDGES_C: Final[tuple[float, ...]] = (5.0, 18.0, 30.0)
 
 
 ROUTING_OBS_FIELDS: Final[tuple[str, ...]] = (
@@ -130,3 +117,11 @@ DELIVERY_OBS_FIELDS: Final[tuple[str, ...]] = (
     "breakdown_alerts",
     "route_delays",
 )
+
+OBS_FIELDS_BY_AGENT: Final[dict[str, tuple[str, ...]]] = {
+    "routing": ROUTING_OBS_FIELDS,
+    "temperature": TEMPERATURE_OBS_FIELDS,
+    "spoilage": SPOILAGE_OBS_FIELDS,
+    "inventory": INVENTORY_OBS_FIELDS,
+    "delivery": DELIVERY_OBS_FIELDS,
+}

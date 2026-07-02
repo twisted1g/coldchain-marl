@@ -2,39 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import gymnasium as gym
 import networkx as nx
 import numpy as np
-from gymnasium.spaces import Box
 
 from core import config
-from core.config import (
-    DELIVERY_OBS_FIELDS,
-    INVENTORY_OBS_FIELDS,
-    ROUTING_OBS_FIELDS,
-    SPOILAGE_OBS_FIELDS,
-    TEMPERATURE_OBS_FIELDS,
-    AmbientTempBucket,
-    DisruptionType,
-    FruitKey,
-    Weather,
-)
+from core.config import FruitKey, Weather
 from core.fruits import get_params
 from core.graph import build_supply_chain, sink_nodes, source_nodes
 from core.noise import Disruption
 
-
-WEATHER_INDEX: dict[Weather, int] = {w: i for i, w in enumerate(Weather)}
-AMBIENT_BUCKET_INDEX: dict[AmbientTempBucket, int] = {b: i for i, b in enumerate(AmbientTempBucket)}
-FRUIT_INDEX: dict[FruitKey, int] = {f: i for i, f in enumerate(FruitKey)}
-
-OBS_FIELDS_BY_AGENT: dict[str, tuple[str, ...]] = {
-    "routing": ROUTING_OBS_FIELDS,
-    "temperature": TEMPERATURE_OBS_FIELDS,
-    "spoilage": SPOILAGE_OBS_FIELDS,
-    "inventory": INVENTORY_OBS_FIELDS,
-    "delivery": DELIVERY_OBS_FIELDS,
-}
 
 _AMBIENT_BASE_TEMP_C: dict[Weather, float] = {
     Weather.SUNNY: 25.0,
@@ -147,139 +123,3 @@ def _sample_weather(rng: np.random.Generator) -> Weather:
 
 def _sample_ambient_temp(rng: np.random.Generator, weather: Weather) -> float:
     return _AMBIENT_BASE_TEMP_C[weather] + float(rng.normal(0.0, 3.0))
-
-
-def ambient_bucket(temp_c: float) -> AmbientTempBucket:
-    edges = config.AMBIENT_TEMP_BUCKET_EDGES_C
-    if temp_c < edges[0]:
-        return AmbientTempBucket.COLD
-    if temp_c < edges[1]:
-        return AmbientTempBucket.MILD
-    if temp_c < edges[2]:
-        return AmbientTempBucket.WARM
-    return AmbientTempBucket.HOT
-
-
-def _traffic_status(state: GlobalState) -> float:
-    n = sum(
-        1 for d in state.active_disruptions if d.type is DisruptionType.INCREASED_TRANSIT
-    )
-    return min(1.0, n / 5.0)
-
-
-def _route_status(state: GlobalState) -> float:
-    blocked_at_current = any(
-        d.type is DisruptionType.BLOCKED_NODE and d.target == state.shipment.current_node
-        for d in state.active_disruptions
-    )
-    return 1.0 if blocked_at_current else 0.0
-
-
-def _inspection_alerts(state: GlobalState) -> float:
-    n = sum(1 for d in state.active_disruptions if d.type is DisruptionType.RISK_FLAG)
-    return min(1.0, n / 5.0)
-
-
-def _breakdown_alerts(state: GlobalState) -> float:
-    return 1.0 if state.fault_signals > 0 else 0.0
-
-
-def _route_delays(state: GlobalState) -> float:
-    return _traffic_status(state)
-
-
-def _location_index(state: GlobalState) -> float:
-    nodes = list(state.graph.nodes)
-    denom = max(1, len(nodes) - 1)
-    return nodes.index(state.shipment.current_node) / denom
-
-
-def extract_routing_obs(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    return np.array(
-        [
-            _traffic_status(state),
-            float(WEATHER_INDEX[state.ambient_weather]),
-            s.perishability_index,
-            _route_status(state),
-            s.spoilage_risk,
-        ],
-        dtype=np.float32,
-    )
-
-
-def extract_temperature_obs(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    return np.array(
-        [
-            s.sensor_temperature_c,
-            s.sensor_humidity,
-            s.desired_temperature_c,
-            state.energy_usage,
-            float(state.fault_signals),
-        ],
-        dtype=np.float32,
-    )
-
-
-def extract_spoilage_obs(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    return np.array(
-        [
-            s.sensor_temperature_c,
-            s.sensor_humidity,
-            _location_index(state),
-            s.freshness_score,
-            s.spoilage_risk,
-            _inspection_alerts(state),
-        ],
-        dtype=np.float32,
-    )
-
-
-def extract_inventory_obs(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    shelf_remaining = max(0, get_params(s.fruit_type).base_shelf_life_ticks - s.age_ticks)
-    return np.array(
-        [
-            state.inventory_level,
-            state.demand_forecast,
-            float(shelf_remaining),
-            state.predicted_demand,
-            state.energy_usage,
-        ],
-        dtype=np.float32,
-    )
-
-
-def extract_delivery_obs(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    return np.array(
-        [
-            1.0 if state.vehicle_available else 0.0,
-            float(state.customer_window_ticks),
-            s.spoilage_risk,
-            _breakdown_alerts(state),
-            _route_delays(state),
-        ],
-        dtype=np.float32,
-    )
-
-
-def extract_all_obs(state: GlobalState) -> dict[str, np.ndarray]:
-    return {
-        "routing": extract_routing_obs(state),
-        "temperature": extract_temperature_obs(state),
-        "spoilage": extract_spoilage_obs(state),
-        "inventory": extract_inventory_obs(state),
-        "delivery": extract_delivery_obs(state),
-    }
-
-
-def make_observation_space(agent_id: str) -> gym.Space:
-    n = len(OBS_FIELDS_BY_AGENT[agent_id])
-    return Box(low=-np.inf, high=np.inf, shape=(n,), dtype=np.float32)
-
-
-def make_observation_spaces() -> dict[str, gym.Space]:
-    return {agent: make_observation_space(agent) for agent in OBS_FIELDS_BY_AGENT}
