@@ -11,19 +11,15 @@ DEFAULT_MAX_STEPS = 20
 DEFAULT_BASE_SEED = 0
 DEFAULT_LEARNERS = ("temperature",)
 
-# Fixed reward weights. w2 is tuned so the interior optimum of the energy/spoilage
-# trade-off lands on the fruit's ideal midpoint: the energy gradient is a constant
-# -0.1*w1 while sensor < ambient, balanced against the Arrhenius spoilage gradient.
-# PHASE 4: context-aware Pareto weights.
 ENERGY_WEIGHT = 1.0
 SPOILAGE_WEIGHT = 25.0
+DEVIATION_WEIGHT = 2.0
 STEP_PENALTY = 0.01
 
-# Routing (paper Algorithm 1): penalize travel time, emissions, spoilage risk
-# accrued on the route. Fixed weights; PHASE 4: context-aware Pareto weights.
 ROUTE_TIME_WEIGHT = 1.0
-ROUTE_EMISSIONS_WEIGHT = 0.5
+ROUTE_EMISSIONS_WEIGHT = 0.1
 ROUTE_RISK_WEIGHT = 10.0
+DELIVERY_BONUS = 100.0
 
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
@@ -79,11 +75,16 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         s = self._state.shipment
         energy = float(self._state.energy_usage)
         spoilage_delta = max(0.0, s.spoilage_risk - self._prev["spoilage_risk"])
-        reward = -(ENERGY_WEIGHT * energy + SPOILAGE_WEIGHT * spoilage_delta) - STEP_PENALTY
 
         params = get_params(s.fruit_type)
         ideal = (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
         deviation = abs(s.sensor_temperature_c - ideal)
+
+        reward = -(
+            ENERGY_WEIGHT * energy
+            + SPOILAGE_WEIGHT * spoilage_delta
+            + DEVIATION_WEIGHT * deviation
+        ) - STEP_PENALTY
         return reward, {"temp_deviation": deviation}
 
     def _routing_reward(self) -> tuple[float, dict[str, float]]:
@@ -95,4 +96,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             + ROUTE_EMISSIONS_WEIGHT * dt_emissions
             + ROUTE_RISK_WEIGHT * risk
         )
-        return -cost, {"route_cost": cost}
+        s = self._state.shipment
+        delivered = s.current_node == s.target_node
+        reward = -cost + (DELIVERY_BONUS if delivered else 0.0)
+        return reward, {"route_cost": cost, "delivered": float(delivered)}
