@@ -15,9 +15,9 @@ EPISODE_LEN_MAX: Final[int] = 20
 DEFAULT_SEED: Final[int] = 0
 
 N_FARMS: Final[int] = 2
-N_HUBS: Final[int] = 2
-N_DCS: Final[int] = 1
-N_RETAILERS: Final[int] = 3
+N_HUBS: Final[int] = 3
+N_DCS: Final[int] = 2
+N_RETAILERS: Final[int] = 4
 
 EDGE_DISTANCE_KM_RANGE: Final[tuple[float, float]] = (20.0, 300.0)
 EDGE_BASE_TRANSIT_TIME_RANGE: Final[tuple[int, int]] = (1, 3)
@@ -26,7 +26,7 @@ EDGE_BASE_EMISSIONS_PER_KM: Final[float] = 0.12
 WAIT_EDGE_TRANSIT_TIME: Final[int] = 1
 WAIT_EDGE_EMISSIONS: Final[float] = 0.0
 
-N_NEXT_NODES: Final[int] = 4
+N_NEXT_NODES: Final[int] = 5
 N_RISK_LEVELS: Final[int] = 3
 N_DELIVERY_WINDOWS: Final[int] = 4
 TEMPERATURE_ACTION_LOW_C: Final[float] = -30.0
@@ -85,6 +85,13 @@ ROUTING_OBS_FIELDS: Final[tuple[str, ...]] = (
     "perishability_index",
     "route_status",
     "fruit_degradation_risk",
+    "location_index",
+    "target_index",
+    *tuple(
+        f"edge{i}_{name}"
+        for i in range(N_NEXT_NODES)
+        for name in ("transit", "emissions", "reaches_target", "is_target", "is_wait")
+    ),
 )
 
 TEMPERATURE_OBS_FIELDS: Final[tuple[str, ...]] = (
