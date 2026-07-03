@@ -10,19 +10,16 @@ from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
 from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent
 
 SEED = 0
-NUM_ITERATIONS = 25
-EPISODES_PER_ITERATION = 10
-EVAL_EPISODES = 10
+NUM_ITERATIONS = 150
+EPISODES_PER_ITERATION = 40
+EVAL_EPISODES = 30
 
 AGENTS = list(OBS_FIELDS_BY_AGENT)
-# Algorithm per agent (paper Section 4.3, hybrid heterogeneous policy design).
-# routing: paper uses tabular Q-learning; impl uses DQN for stack compatibility.
 ALGO = {"temperature": "DDPG", "routing": "DQN"}
-# (metric_key emitted in infos, direction) per learner, for sanity checks.
 METRIC = {"temperature": ("temp_deviation", "min"), "routing": ("route_cost", "min")}
 
 # Learners trained this run; override via `train.py --agents`. Rest stay frozen.
-LEARNERS = ["temperature"]
+LEARNERS = ["temperature", "routing"]
 
 FRUIT = "banana"
 TRAIN_SEED = 1000
