@@ -15,15 +15,21 @@ EPISODES_PER_ITERATION = 40
 EVAL_EPISODES = 30
 
 AGENTS = list(OBS_FIELDS_BY_AGENT)
-ALGO = {"temperature": "DDPG", "routing": "DQN", "spoilage": "SPOILAGE_GNN"}
+ALGO = {
+    "temperature": "DDPG",
+    "routing": "DQN",
+    "spoilage": "SPOILAGE_GNN",
+    "inventory": "DDPG",
+}
 METRIC = {
     "temperature": ("temp_deviation", "min"),
     "routing": ("route_cost", "min"),
     "spoilage": ("fn_rate", "min"),
+    "inventory": ("inventory_cost", "min"),
 }
 
 # Learners trained this run; override via `train.py --agents`. Rest stay frozen.
-LEARNERS = ["temperature", "routing", "spoilage"]
+LEARNERS = ["temperature", "routing", "spoilage", "inventory"]
 
 FRUIT = "banana"
 TRAIN_SEED = 1000

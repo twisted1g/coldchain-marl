@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from core.config import FruitKey
+from core.config import INVENTORY_INIT_LEVEL, FruitKey
 from core.fruits import get_params
 from core.spoilage import risk_to_label
+from core.observations import inventory_obs
 from env.pettingzoo_adapter import ColdChainParallelEnv
 
 DEFAULT_FRUIT = FruitKey.STRAWBERRY
@@ -28,6 +29,15 @@ DELIVERY_BONUS = 100.0
 SPOILAGE_PRED_WEIGHT = 3.0
 SPOILAGE_FN_WEIGHT = 5.0
 SPOILAGE_INSPECTION_WEIGHT = 0.2
+
+# Inventory reward (paper Alg 4), static weights for now: r = -(w1*L_spoil + w2*H + w3*E).
+# NOTE (documented): Alg 4 as published has no service/stockout term, so the optimal policy
+# is to order ~nothing (all three costs -> 0). Faithful to the paper box; an unmet_demand
+# penalty is the lever to make it a genuine over/under-stock balance (deferred, like the
+# spoilage `age` feature). Weights are starting points — tune by curves.
+INVENTORY_SPOILAGE_WEIGHT = 5.0
+INVENTORY_HOLDING_WEIGHT = 1.0
+INVENTORY_EMISSIONS_WEIGHT = 1.0
 
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
@@ -53,15 +63,21 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             "temperature": self._temperature_reward,
             "routing": self._routing_reward,
             "spoilage": self._spoilage_reward,
+            "inventory": self._inventory_reward,
         }
         learners = config.get("learners", DEFAULT_LEARNERS)
         self._reward_methods = {a: supported[a] for a in learners}
         self._episode_index = 0
         self._prev: dict[str, float] = {}
+        # Stock persists across episodes so inventory is a genuine long-horizon control
+        # problem, not reset each episode (paper Alg 4 observes a running inventory state).
+        self._carry_inventory = INVENTORY_INIT_LEVEL
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
         obs, infos = super().reset(seed=self._base_seed + self._episode_index)
         self._episode_index += 1
+        self._state.inventory_level = self._carry_inventory
+        obs["inventory"] = inventory_obs(self._state)
         self._prev = {
             "spoilage_risk": self._state.shipment.spoilage_risk,
             "route_travel_time": self._state.route_travel_time,
@@ -78,6 +94,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._prev["spoilage_risk"] = self._state.shipment.spoilage_risk
         self._prev["route_travel_time"] = self._state.route_travel_time
         self._prev["route_emissions"] = self._state.route_emissions
+        self._carry_inventory = self._state.inventory_level
         return obs, rewards, terminated, truncated, infos
 
     def _temperature_reward(self) -> tuple[float, dict[str, float]]:
@@ -121,3 +138,19 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             + SPOILAGE_INSPECTION_WEIGHT * pred
         )
         return reward, {"fn_rate": false_negative, "y_pred": pred, "spoilage_label": label}
+
+    def _inventory_reward(self) -> tuple[float, dict[str, float]]:
+        s = self._state
+        spoilage_loss = s.inventory_level * s.shipment.spoilage_risk  # overstocked perishables
+        holding = s.inventory_level
+        emissions = s.inventory_order  # restock/delivery emissions
+        cost = (
+            INVENTORY_SPOILAGE_WEIGHT * spoilage_loss
+            + INVENTORY_HOLDING_WEIGHT * holding
+            + INVENTORY_EMISSIONS_WEIGHT * emissions
+        )
+        return -cost, {
+            "inventory_cost": cost,
+            "unmet_demand": s.unmet_demand,
+            "inventory_level": s.inventory_level,
+        }
