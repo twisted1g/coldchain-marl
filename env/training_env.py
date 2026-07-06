@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from core.config import INVENTORY_INIT_LEVEL, FruitKey
+from core.config import FruitKey
 from core.fruits import get_params
 from core.spoilage import risk_to_label
-from core.observations import inventory_obs
 from env.pettingzoo_adapter import ColdChainParallelEnv
 
 DEFAULT_FRUIT = FruitKey.STRAWBERRY
@@ -69,15 +68,10 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._reward_methods = {a: supported[a] for a in learners}
         self._episode_index = 0
         self._prev: dict[str, float] = {}
-        # Stock persists across episodes so inventory is a genuine long-horizon control
-        # problem, not reset each episode (paper Alg 4 observes a running inventory state).
-        self._carry_inventory = INVENTORY_INIT_LEVEL
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
         obs, infos = super().reset(seed=self._base_seed + self._episode_index)
         self._episode_index += 1
-        self._state.inventory_level = self._carry_inventory
-        obs["inventory"] = inventory_obs(self._state)
         self._prev = {
             "spoilage_risk": self._state.shipment.spoilage_risk,
             "route_travel_time": self._state.route_travel_time,
@@ -94,7 +88,6 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._prev["spoilage_risk"] = self._state.shipment.spoilage_risk
         self._prev["route_travel_time"] = self._state.route_travel_time
         self._prev["route_emissions"] = self._state.route_emissions
-        self._carry_inventory = self._state.inventory_level
         return obs, rewards, terminated, truncated, infos
 
     def _temperature_reward(self) -> tuple[float, dict[str, float]]:
