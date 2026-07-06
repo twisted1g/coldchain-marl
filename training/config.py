@@ -23,7 +23,7 @@ METRIC = {
 }
 
 # Learners trained this run; override via `train.py --agents`. Rest stay frozen.
-LEARNERS = ["temperature", "routing"]
+LEARNERS = ["temperature", "routing", "spoilage"]
 
 FRUIT = "banana"
 TRAIN_SEED = 1000

@@ -13,7 +13,6 @@ _FRUIT_INDEX: dict[FruitKey, int] = {f: i for i, f in enumerate(FruitKey)}
 
 # Normalizers: BLOCKED_NODE contributes 1.0, INCREASED_TRANSIT up to ~3 ticks of delta.
 _DELAY_SCALE = 3.0
-_DEFAULT_NODE_HUMIDITY = 0.85
 
 
 def node_order(graph: nx.DiGraph) -> list[str]:
@@ -33,7 +32,9 @@ def static_edge_index(graph: nx.DiGraph) -> np.ndarray:
     return np.array(edges, dtype=np.int64).T.reshape(2, -1)
 
 
-def _node_delay(state: GlobalState, node: str) -> float:
+def node_delay(state: GlobalState, node: str) -> float:
+    """Normalized transit-delay pressure on a node from active disruptions. Used both as a
+    GNN node feature and as a spoilage driver (a held shipment accrues more risk)."""
     total = 0.0
     for d in state.active_disruptions:
         if d.type is DisruptionType.BLOCKED_NODE and d.target == node:
@@ -58,6 +59,6 @@ def spoilage_node_features(state: GlobalState) -> np.ndarray:
         if node == s.current_node:
             temp, hum = s.sensor_temperature_c, s.sensor_humidity
         else:
-            temp, hum = state.ambient_temp_c, _DEFAULT_NODE_HUMIDITY
-        rows.append([temp, hum, _node_delay(state, node), fruit])
+            temp, hum = state.ambient_temp_c, state.ambient_humidity
+        rows.append([temp, hum, node_delay(state, node), fruit])
     return np.array(rows, dtype=np.float32)
