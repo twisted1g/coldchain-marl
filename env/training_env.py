@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from core.config import FruitKey
 from core.fruits import get_params
+from core.spoilage import risk_to_label
 from env.pettingzoo_adapter import ColdChainParallelEnv
 
 DEFAULT_FRUIT = FruitKey.STRAWBERRY
@@ -20,6 +21,13 @@ ROUTE_TIME_WEIGHT = 1.0
 ROUTE_EMISSIONS_WEIGHT = 0.1
 ROUTE_RISK_WEIGHT = 10.0
 DELIVERY_BONUS = 100.0
+
+# Spoilage reward (paper Alg 3), static weights for now: prediction error + a heavy
+# false-negative penalty (missed spoilage is the costly failure) + inspection cost so the
+# agent cannot trivially cry wolf. Dynamic Pareto weights come in a later item.
+SPOILAGE_PRED_WEIGHT = 1.0
+SPOILAGE_FN_WEIGHT = 5.0
+SPOILAGE_INSPECTION_WEIGHT = 0.5
 
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
@@ -44,6 +52,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         supported: dict[str, RewardMethod] = {
             "temperature": self._temperature_reward,
             "routing": self._routing_reward,
+            "spoilage": self._spoilage_reward,
         }
         learners = config.get("learners", DEFAULT_LEARNERS)
         self._reward_methods = {a: supported[a] for a in learners}
@@ -100,3 +109,15 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         delivered = s.current_node == s.target_node
         reward = -cost + (DELIVERY_BONUS if delivered else 0.0)
         return reward, {"route_cost": cost, "delivered": float(delivered)}
+
+    def _spoilage_reward(self) -> tuple[float, dict[str, float]]:
+        pred = self._state.spoilage_prediction
+        label = float(risk_to_label(self._state.shipment.spoilage_risk))
+        pred_error = (pred - label) ** 2
+        false_negative = 1.0 if (label == 1.0 and pred < 0.5) else 0.0
+        reward = -(
+            SPOILAGE_PRED_WEIGHT * pred_error
+            + SPOILAGE_FN_WEIGHT * false_negative
+            + SPOILAGE_INSPECTION_WEIGHT * pred
+        )
+        return reward, {"fn_rate": false_negative, "y_pred": pred, "spoilage_label": label}

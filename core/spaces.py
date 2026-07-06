@@ -15,7 +15,12 @@ ACTION_SPACES: dict[str, gym.Space] = {
         shape=(1,),
         dtype=np.float32,
     ),
-    "spoilage": Discrete(config.N_RISK_LEVELS),
+    "spoilage": Box(
+        low=config.SPOILAGE_ACTION_LOW,
+        high=config.SPOILAGE_ACTION_HIGH,
+        shape=(1,),
+        dtype=np.float32,
+    ),
     "inventory": Box(
         low=config.INVENTORY_ACTION_LOW,
         high=config.INVENTORY_ACTION_HIGH,

@@ -32,7 +32,7 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     _apply_routing_action(state, actions.get("routing"))
     _apply_inventory_action(state, actions.get("inventory"))
     _apply_delivery_action(state, actions.get("delivery"))
-    spoilage_pred = _apply_spoilage_action(actions.get("spoilage"))
+    _apply_spoilage_action(state, actions.get("spoilage"))
 
     _advance_thermal_state(state)
     _advance_spoilage(state)
@@ -53,7 +53,7 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     terminated["__all__"] = done
     truncated = {agent: False for agent in OBS_FIELDS_BY_AGENT}
     truncated["__all__"] = False
-    infos = _build_infos(state, spoilage_pred, delivered)
+    infos = _build_infos(state, delivered)
 
     return StepResult(
         observations=observations,
@@ -107,10 +107,11 @@ def _apply_delivery_action(state: GlobalState, action: Any) -> None:
     state.customer_window_ticks = int(remaining_window * (idx + 1) / config.N_DELIVERY_WINDOWS)
 
 
-def _apply_spoilage_action(action: Any) -> int | None:
+def _apply_spoilage_action(state: GlobalState, action: Any) -> None:
     if action is None:
-        return None
-    return int(action) % config.N_RISK_LEVELS
+        return
+    value = float(np.asarray(action).flatten()[0])
+    state.spoilage_prediction = float(np.clip(value, 0.0, 1.0))
 
 
 def _advance_thermal_state(state: GlobalState) -> None:
@@ -143,14 +144,13 @@ def _update_energy(state: GlobalState) -> None:
 
 def _build_infos(
     state: GlobalState,
-    spoilage_pred: int | None,
     delivered: bool,
 ) -> dict[str, dict[str, Any]]:
     return {
         "routing": {"delivered": delivered},
         "temperature": {"energy_usage": state.energy_usage},
         "spoilage": {
-            "y_pred": spoilage_pred,
+            "y_pred": state.spoilage_prediction,
             "ground_truth_label": state.shipment.ground_truth_label,
         },
         "inventory": {"inventory_level": state.inventory_level},

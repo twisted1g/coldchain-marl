@@ -7,7 +7,7 @@ import numpy as np
 
 from core.config import OBS_FIELDS_BY_AGENT
 from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
-from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent
+from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent, SpoilageAgent
 
 SEED = 0
 NUM_ITERATIONS = 150
@@ -15,8 +15,12 @@ EPISODES_PER_ITERATION = 40
 EVAL_EPISODES = 30
 
 AGENTS = list(OBS_FIELDS_BY_AGENT)
-ALGO = {"temperature": "DDPG", "routing": "DQN"}
-METRIC = {"temperature": ("temp_deviation", "min"), "routing": ("route_cost", "min")}
+ALGO = {"temperature": "DDPG", "routing": "DQN", "spoilage": "SPOILAGE_GNN"}
+METRIC = {
+    "temperature": ("temp_deviation", "min"),
+    "routing": ("route_cost", "min"),
+    "spoilage": ("fn_rate", "min"),
+}
 
 # Learners trained this run; override via `train.py --agents`. Rest stay frozen.
 LEARNERS = ["temperature", "routing"]
@@ -50,10 +54,14 @@ DQN_CFG: dict[str, Any] = {
     "eps_decay_steps": 2000,
 }
 
-ALGO_CFG = {"DDPG": DDPG_CFG, "DQN": DQN_CFG}
+# Spoilage DDPG head runs on the frozen GNN embedding (paper Alg 3); same DDPG hypers.
+SPOILAGE_CFG: dict[str, Any] = dict(DDPG_CFG)
+
+ALGO_CFG = {"DDPG": DDPG_CFG, "DQN": DQN_CFG, "SPOILAGE_GNN": SPOILAGE_CFG}
 
 ARTIFACTS = Path(__file__).resolve().parent.parent / "artifacts"
 MODULES_DIR = ARTIFACTS / "modules"
+SPOILAGE_ENCODER_PATH = MODULES_DIR / "spoilage_gnn" / "encoder.pt"
 CURVE_CSV = ARTIFACTS / "reward_curve.csv"
 
 
@@ -72,6 +80,10 @@ def _build_learner(agent: str, env: ColdChainTrainingEnv) -> Agent:
         return DDPGAgent(obs_dim, env.action_space(agent), ALGO_CFG["DDPG"])
     if algo == "DQN":
         return DQNAgent(obs_dim, env.action_space(agent), ALGO_CFG["DQN"])
+    if algo == "SPOILAGE_GNN":
+        return SpoilageAgent(
+            obs_dim, env.action_space(agent), ALGO_CFG["SPOILAGE_GNN"], SPOILAGE_ENCODER_PATH
+        )
     raise NotImplementedError(f"Algorithm {algo!r} for agent {agent!r} not implemented yet")
 
 

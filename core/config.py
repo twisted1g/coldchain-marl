@@ -18,6 +18,7 @@ N_FARMS: Final[int] = 2
 N_HUBS: Final[int] = 3
 N_DCS: Final[int] = 2
 N_RETAILERS: Final[int] = 4
+N_NODES: Final[int] = N_FARMS + N_HUBS + N_DCS + N_RETAILERS
 
 EDGE_DISTANCE_KM_RANGE: Final[tuple[float, float]] = (20.0, 300.0)
 EDGE_BASE_TRANSIT_TIME_RANGE: Final[tuple[int, int]] = (1, 3)
@@ -29,6 +30,9 @@ WAIT_EDGE_EMISSIONS: Final[float] = 0.0
 N_NEXT_NODES: Final[int] = 5
 N_RISK_LEVELS: Final[int] = 3
 N_DELIVERY_WINDOWS: Final[int] = 4
+# Spoilage action = continuous predicted risk / inspection threshold (paper Alg 3).
+SPOILAGE_ACTION_LOW: Final[float] = 0.0
+SPOILAGE_ACTION_HIGH: Final[float] = 1.0
 TEMPERATURE_ACTION_LOW_C: Final[float] = -30.0
 TEMPERATURE_ACTION_HIGH_C: Final[float] = 30.0
 INVENTORY_ACTION_LOW: Final[float] = 0.0
@@ -102,13 +106,13 @@ TEMPERATURE_OBS_FIELDS: Final[tuple[str, ...]] = (
     "fault_signals",
 )
 
-SPOILAGE_OBS_FIELDS: Final[tuple[str, ...]] = (
-    "sensor_temperature",
-    "sensor_humidity",
-    "location_index",
-    "freshness_score",
-    "spoilage_risk",
-    "inspection_alerts",
+# Spoilage observation is the flattened per-node GNN feature matrix X [N_NODES, 4]
+# = [T, H, delay, fruit_type] (paper Alg 3). The agent's frozen encoder infers risk
+# from these; the Arrhenius ground-truth risk is deliberately NOT exposed (anti-leak).
+SPOILAGE_OBS_FIELDS: Final[tuple[str, ...]] = tuple(
+    f"node{i}_{name}"
+    for i in range(N_NODES)
+    for name in ("temperature", "humidity", "delay", "fruit_type")
 )
 
 INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (

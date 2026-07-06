@@ -55,6 +55,7 @@ class GlobalState:
     fault_signals: int
     route_travel_time: float
     route_emissions: float
+    spoilage_prediction: float
 
 
 def init_state(
@@ -114,6 +115,7 @@ def init_state(
         fault_signals=0,
         route_travel_time=0.0,
         route_emissions=0.0,
+        spoilage_prediction=0.0,
     )
 
 

@@ -13,6 +13,10 @@ from torchrl.modules import Actor, QValueActor, ValueOperator
 from torchrl.objectives import DDPGLoss, DQNLoss
 from torchrl.objectives.utils import SoftUpdate
 
+from core.graph import build_supply_chain
+from core.graph_features import SPOILAGE_NODE_FEATURES, static_edge_index
+from training.gnn import GNN_EMBED_DIM, SpoilageGNN
+
 Action = np.ndarray | np.integer | int
 
 
@@ -321,3 +325,59 @@ class DQNAgent:
 
     def load(self, path: Path) -> None:
         self._qnet.load_state_dict(torch.load(path / "qnet.pt", weights_only=True))
+
+
+class SpoilageAgent:
+    """Spoilage agent (paper Algorithm 3): a frozen pre-trained GraphSAGE encoder feeding
+    a DDPG actor-critic on the graph embedding.
+
+    The observation is the flattened per-node feature matrix X [N, 4]; the agent encodes it
+    to z = f_GNN(G, X) (the paper's RL state s0) and runs DDPG on z. The action is a
+    continuous spoilage-risk prediction / inspection threshold in [0, 1]. The encoder is
+    trained offline against precomputed labels and frozen here, so encoding an observation
+    is deterministic and the embeddings can be stored in the replay buffer directly.
+    """
+
+    def __init__(self, obs_dim: int, action_space: Box, cfg: dict[str, Any], encoder_path: Path) -> None:
+        self._n_nodes = obs_dim // SPOILAGE_NODE_FEATURES
+        self._encoder = SpoilageGNN()
+        self._encoder.load_state_dict(torch.load(encoder_path, weights_only=True))
+        self._encoder.eval()
+        for p in self._encoder.parameters():
+            p.requires_grad_(False)
+        # Topology is static across episodes, so a single edge index serves every graph.
+        graph = build_supply_chain(np.random.default_rng(0))
+        self._edge_index = torch.as_tensor(static_edge_index(graph), dtype=torch.long)
+        self._ddpg = DDPGAgent(GNN_EMBED_DIM, action_space, cfg)
+
+    def _encode(self, obs: np.ndarray) -> np.ndarray:
+        x = torch.as_tensor(obs, dtype=torch.float32).reshape(self._n_nodes, SPOILAGE_NODE_FEATURES)
+        with torch.no_grad():
+            z = self._encoder(x, self._edge_index)
+        return z.squeeze(0).numpy()
+
+    def act(self, obs: np.ndarray, *, explore: bool) -> np.ndarray:
+        return self._ddpg.act(self._encode(obs), explore=explore)
+
+    def observe(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        terminated: bool,
+        truncated: bool,
+    ) -> None:
+        self._ddpg.observe(
+            self._encode(obs), action, reward, self._encode(next_obs), terminated, truncated
+        )
+
+    def update(self) -> dict[str, float]:
+        return self._ddpg.update()
+
+    def save(self, path: Path) -> None:
+        # Encoder is a separate frozen artifact from the offline pretrain; only the DDPG head trains.
+        self._ddpg.save(path)
+
+    def load(self, path: Path) -> None:
+        self._ddpg.load(path)

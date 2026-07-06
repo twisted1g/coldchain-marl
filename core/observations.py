@@ -6,6 +6,7 @@ import numpy as np
 from core import config
 from core.config import DisruptionType, Weather
 from core.fruits import get_params
+from core.graph_features import spoilage_node_features
 from core.state import GlobalState
 
 WEATHER_INDEX: dict[Weather, int] = {w: i for i, w in enumerate(Weather)}
@@ -28,11 +29,6 @@ def _route_status(state: GlobalState) -> float:
         for d in state.active_disruptions
     )
     return 1.0 if blocked_at_current else 0.0
-
-
-def _inspection_alerts(state: GlobalState) -> float:
-    n = sum(1 for d in state.active_disruptions if d.type is DisruptionType.RISK_FLAG)
-    return min(1.0, n / 5.0)
 
 
 def _breakdown_alerts(state: GlobalState) -> float:
@@ -106,18 +102,9 @@ def temperature_obs(state: GlobalState) -> np.ndarray:
 
 
 def spoilage_obs(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    return np.array(
-        [
-            s.sensor_temperature_c,
-            s.sensor_humidity,
-            _location_index(state),
-            s.freshness_score,
-            s.spoilage_risk,
-            _inspection_alerts(state),
-        ],
-        dtype=np.float32,
-    )
+    """Flattened per-node GNN feature matrix X [N_NODES, 4] (paper Alg 3). The Arrhenius
+    ground-truth risk is intentionally excluded — the agent's frozen encoder infers it."""
+    return spoilage_node_features(state).flatten()
 
 
 def inventory_obs(state: GlobalState) -> np.ndarray:

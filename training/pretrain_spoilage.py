@@ -13,7 +13,7 @@ from core.graph_features import spoilage_node_features, static_edge_index
 from core.spaces import ACTION_SPACES
 from core.spoilage import risk_to_label
 from core.state import init_state
-from training.config import MODULES_DIR
+from training.config import SPOILAGE_ENCODER_PATH
 from training.gnn import SpoilagePretrainModel
 
 # Offline precompute: the GNN encoder is trained supervised against Arrhenius spoilage
@@ -28,8 +28,6 @@ BATCH_SIZE = 128
 LR = 1e-3
 VAL_FRACTION = 0.2
 
-ENCODER_DIR = MODULES_DIR / "spoilage_gnn"
-ENCODER_PATH = ENCODER_DIR / "encoder.pt"
 
 
 def _build_samples(seed: int, n_episodes: int) -> list[Data]:
@@ -115,9 +113,9 @@ def main() -> None:
                 f"val_acc={m['accuracy']:.3f}  val_fn_rate={m['fn_rate']:.3f}"
             )
 
-    ENCODER_DIR.mkdir(parents=True, exist_ok=True)
-    torch.save(model.encoder.state_dict(), ENCODER_PATH)
-    print(f"saved frozen encoder -> {ENCODER_PATH}")
+    SPOILAGE_ENCODER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.encoder.state_dict(), SPOILAGE_ENCODER_PATH)
+    print(f"saved frozen encoder -> {SPOILAGE_ENCODER_PATH}")
 
 
 if __name__ == "__main__":
