@@ -25,9 +25,9 @@ DELIVERY_BONUS = 100.0
 # Spoilage reward (paper Alg 3), static weights for now: prediction error + a heavy
 # false-negative penalty (missed spoilage is the costly failure) + inspection cost so the
 # agent cannot trivially cry wolf. Dynamic Pareto weights come in a later item.
-SPOILAGE_PRED_WEIGHT = 1.0
+SPOILAGE_PRED_WEIGHT = 3.0
 SPOILAGE_FN_WEIGHT = 5.0
-SPOILAGE_INSPECTION_WEIGHT = 0.5
+SPOILAGE_INSPECTION_WEIGHT = 0.2
 
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 

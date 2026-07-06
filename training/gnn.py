@@ -8,8 +8,8 @@ from core.graph_features import SPOILAGE_NODE_FEATURES
 
 # Encoder dims shared by the offline pretrain and the online spoilage agent so the
 # saved encoder loads into the agent unchanged.
-GNN_HIDDEN = 32
-GNN_EMBED_DIM = 32
+GNN_HIDDEN = 64
+GNN_EMBED_DIM = 64
 
 
 class SpoilageGNN(nn.Module):

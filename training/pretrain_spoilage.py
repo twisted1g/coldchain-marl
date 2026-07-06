@@ -21,9 +21,9 @@ from training.gnn import SpoilagePretrainModel
 # reads the ground-truth risk; it infers from the node features [T, H, delay, fruit].
 
 SEED = 0
-N_EPISODES = 600
+N_EPISODES = 1200
 EPISODE_MAX_STEPS = 20
-EPOCHS = 40
+EPOCHS = 60
 BATCH_SIZE = 128
 LR = 1e-3
 VAL_FRACTION = 0.2
