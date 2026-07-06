@@ -19,6 +19,13 @@ _AMBIENT_BASE_TEMP_C: dict[Weather, float] = {
     Weather.STORMY: 10.0,
 }
 
+_AMBIENT_HUMIDITY_BY_WEATHER: dict[Weather, float] = {
+    Weather.SUNNY: 0.45,
+    Weather.CLOUDY: 0.65,
+    Weather.RAINY: 0.85,
+    Weather.STORMY: 0.92,
+}
+
 
 @dataclass(slots=True)
 class Shipment:
@@ -45,6 +52,7 @@ class GlobalState:
     active_disruptions: list[Disruption]
     ambient_weather: Weather
     ambient_temp_c: float
+    ambient_humidity: float
     inventory_level: float
     demand_forecast: float
     predicted_demand: float
@@ -95,6 +103,8 @@ def init_state(
 
     weather = _sample_weather(rng)
     ambient_temp = _sample_ambient_temp(rng, weather)
+    ambient_humidity = _sample_ambient_humidity(rng, weather)
+    shipment.sensor_humidity = ambient_humidity
 
     return GlobalState(
         tick=0,
@@ -105,6 +115,7 @@ def init_state(
         active_disruptions=[],
         ambient_weather=weather,
         ambient_temp_c=ambient_temp,
+        ambient_humidity=ambient_humidity,
         inventory_level=1.0,
         demand_forecast=1.0,
         predicted_demand=1.0,
@@ -129,3 +140,8 @@ def _sample_weather(rng: np.random.Generator) -> Weather:
 
 def _sample_ambient_temp(rng: np.random.Generator, weather: Weather) -> float:
     return _AMBIENT_BASE_TEMP_C[weather] + float(rng.normal(0.0, 3.0))
+
+
+def _sample_ambient_humidity(rng: np.random.Generator, weather: Weather) -> float:
+    base = _AMBIENT_HUMIDITY_BY_WEATHER[weather]
+    return float(np.clip(base + rng.normal(0.0, 0.05), 0.0, 1.0))

@@ -50,6 +50,14 @@ KELVIN_OFFSET: Final[float] = 273.15
 
 RISK_LABEL_THRESHOLD: Final[float] = 0.5
 
+# Humidity dynamics + spoilage coupling. Sensor humidity drifts toward the weather-driven
+# ambient humidity; deviation outside a fruit's optimal band and node transit delay both
+# add to the Arrhenius spoilage rate (so the H and delay node features carry real signal).
+HUMIDITY_AMBIENT_PULL: Final[float] = 0.15
+HUMIDITY_NOISE_SIGMA: Final[float] = 0.03
+HUMIDITY_SEVERITY_SCALE: Final[float] = 0.3
+DELAY_RISK_FACTOR: Final[float] = 0.5
+
 
 class DisruptionType(str, Enum):
     BLOCKED_NODE = "blocked_node"

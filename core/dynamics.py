@@ -7,6 +7,7 @@ import numpy as np
 
 from core import config
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
+from core.graph_features import node_delay
 from core.noise import NoiseModel
 from core.observations import all_obs
 from core.spoilage import ArrheniusSpoilage, risk_to_label
@@ -35,6 +36,7 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     _apply_spoilage_action(state, actions.get("spoilage"))
 
     _advance_thermal_state(state)
+    _advance_humidity(state)
     _advance_spoilage(state)
     _maybe_sample_disruption(state)
     _update_energy(state)
@@ -121,9 +123,19 @@ def _advance_thermal_state(state: GlobalState) -> None:
     s.sensor_temperature_c = s.sensor_temperature_c + 0.5 * diff + ambient_pull
 
 
+def _advance_humidity(state: GlobalState) -> None:
+    s = state.shipment
+    pull = (state.ambient_humidity - s.sensor_humidity) * config.HUMIDITY_AMBIENT_PULL
+    noise = float(state.rng.normal(0.0, config.HUMIDITY_NOISE_SIGMA))
+    s.sensor_humidity = float(np.clip(s.sensor_humidity + pull + noise, 0.0, 1.0))
+
+
 def _advance_spoilage(state: GlobalState) -> None:
     s = state.shipment
-    delta = _spoilage_model.risk_delta(s.fruit_type, s.sensor_temperature_c, dt_ticks=1.0)
+    delay = node_delay(state, s.current_node)
+    delta = _spoilage_model.risk_delta(
+        s.fruit_type, s.sensor_temperature_c, s.sensor_humidity, delay, dt_ticks=1.0
+    )
     s.spoilage_risk = float(np.clip(s.spoilage_risk + delta, 0.0, 1.0))
     s.freshness_score = float(max(0.0, 1.0 - s.spoilage_risk))
     s.age_ticks += 1
