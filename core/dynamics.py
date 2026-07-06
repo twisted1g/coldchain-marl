@@ -95,10 +95,26 @@ def _apply_temperature_action(state: GlobalState, action: Any) -> None:
 
 
 def _apply_inventory_action(state: GlobalState, action: Any) -> None:
+    """Order (restock) then serve stochastic demand (paper Alg 4). Demand is drawn from the
+    dedicated ``inventory_rng`` so it never shifts the shared world rng stream."""
     if action is None:
         return
-    value = float(np.asarray(action).flatten()[0])
-    state.inventory_level = float(np.clip(state.inventory_level + value, 0.0, 1.0))
+    order = float(
+        np.clip(
+            np.asarray(action).flatten()[0],
+            config.INVENTORY_ACTION_LOW,
+            config.INVENTORY_ACTION_HIGH,
+        )
+    )
+    level = state.inventory_level + order * config.INVENTORY_RESTOCK_SCALE
+    demand = max(
+        0.0,
+        float(state.inventory_rng.normal(state.demand_forecast, config.INVENTORY_DEMAND_SIGMA)),
+    )
+    sold = min(level, demand)
+    state.unmet_demand = demand - sold
+    state.inventory_order = order
+    state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
 
 
 def _apply_delivery_action(state: GlobalState, action: Any) -> None:

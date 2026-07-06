@@ -38,6 +38,17 @@ TEMPERATURE_ACTION_HIGH_C: Final[float] = 30.0
 INVENTORY_ACTION_LOW: Final[float] = 0.0
 INVENTORY_ACTION_HIGH: Final[float] = 1.0
 
+# Inventory dynamics (paper Alg 4). Stock is consumed by stochastic per-tick demand and
+# replenished by the agent's continuous order quantity, so the level is a real controlled
+# variable (not the old pinned 1.0). Demand noise is drawn from a DEDICATED rng seeded off
+# INVENTORY_RNG_OFFSET so it never perturbs the shared world rng stream that the
+# temperature/routing/spoilage agents depend on.
+INVENTORY_INIT_LEVEL: Final[float] = 1.0
+INVENTORY_DEMAND_MEAN: Final[float] = 0.15
+INVENTORY_DEMAND_SIGMA: Final[float] = 0.05
+INVENTORY_RESTOCK_SCALE: Final[float] = 0.25
+INVENTORY_RNG_OFFSET: Final[int] = 90_001
+
 
 class FruitKey(str, Enum):
     STRAWBERRY = "strawberry"

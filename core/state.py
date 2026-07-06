@@ -54,6 +54,9 @@ class GlobalState:
     ambient_temp_c: float
     ambient_humidity: float
     inventory_level: float
+    inventory_rng: np.random.Generator
+    unmet_demand: float
+    inventory_order: float
     demand_forecast: float
     predicted_demand: float
     vehicle_available: bool
@@ -71,7 +74,8 @@ def init_state(
     max_steps: int | None = None,
     fruit: FruitKey | None = None,
 ) -> GlobalState:
-    rng = np.random.default_rng(config.DEFAULT_SEED if seed is None else seed)
+    base_seed = config.DEFAULT_SEED if seed is None else seed
+    rng = np.random.default_rng(base_seed)
     n_steps = (
         max_steps
         if max_steps is not None
@@ -116,8 +120,11 @@ def init_state(
         ambient_weather=weather,
         ambient_temp_c=ambient_temp,
         ambient_humidity=ambient_humidity,
-        inventory_level=1.0,
-        demand_forecast=1.0,
+        inventory_level=config.INVENTORY_INIT_LEVEL,
+        inventory_rng=np.random.default_rng(base_seed + config.INVENTORY_RNG_OFFSET),
+        unmet_demand=0.0,
+        inventory_order=0.0,
+        demand_forecast=config.INVENTORY_DEMAND_MEAN,
         predicted_demand=1.0,
         vehicle_available=True,
         customer_window_ticks=n_steps,
