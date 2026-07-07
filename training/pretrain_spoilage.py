@@ -4,7 +4,7 @@ import argparse
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
@@ -23,7 +23,6 @@ EPOCHS = 60
 BATCH_SIZE = 128
 LR = 1e-3
 VAL_FRACTION = 0.2
-
 
 
 def _build_samples(seed: int, n_episodes: int) -> list[Data]:
@@ -62,11 +61,17 @@ def _evaluate(model: SpoilagePretrainModel, loader: DataLoader) -> dict[str, flo
     total = tp + fp + tn + fn
     acc = (tp + tn) / total if total else 0.0
     fn_rate = fn / (tp + fn) if (tp + fn) else 0.0
-    return {"accuracy": acc, "fn_rate": fn_rate, "pos_frac": (tp + fn) / total if total else 0.0}
+    return {
+        "accuracy": acc,
+        "fn_rate": fn_rate,
+        "pos_frac": (tp + fn) / total if total else 0.0,
+    }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Offline pretrain of the spoilage GNN encoder.")
+    parser = argparse.ArgumentParser(
+        description="Offline pretrain of the spoilage GNN encoder."
+    )
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--episodes", type=int, default=N_EPISODES)
     parser.add_argument("--epochs", type=int, default=EPOCHS)
@@ -83,8 +88,13 @@ def main() -> None:
     val = [samples[i] for i in sorted(val_idx)]
 
     pos = sum(float(s.y.item()) for s in train)
-    pos_weight = torch.tensor([(len(train) - pos) / pos]) if pos else torch.tensor([1.0])
-    print(f"samples: {len(samples)} (train {len(train)}, val {len(val)})  pos_frac={pos / len(train):.3f}")
+    pos_weight = (
+        torch.tensor([(len(train) - pos) / pos]) if pos else torch.tensor([1.0])
+    )
+    print(
+        f"samples: {len(samples)} (train {len(train)}, val {len(val)})  "
+        f"pos_frac={pos / len(train):.3f}"
+    )
 
     model = SpoilagePretrainModel()
     opt = torch.optim.Adam(model.parameters(), lr=LR)

@@ -11,7 +11,6 @@ from core.fruits import get_params
 from core.graph import build_supply_chain, sink_nodes, source_nodes
 from core.noise import Disruption
 
-
 _AMBIENT_BASE_TEMP_C: dict[Weather, float] = {
     Weather.SUNNY: 25.0,
     Weather.CLOUDY: 18.0,
@@ -72,10 +71,7 @@ class GlobalState:
     inventory_order: float
     demand_forecast: float
     predicted_demand: float
-    vehicle_available: bool
-    customer_window_ticks: int
     energy_usage: float
-    cooling_status: bool
     fault_signals: int
     route_travel_time: float
     route_emissions: float
@@ -140,10 +136,7 @@ def init_state(
         inventory_order=0.0,
         demand_forecast=config.INVENTORY_DEMAND_MEAN,
         predicted_demand=1.0,
-        vehicle_available=True,
-        customer_window_ticks=n_steps,
         energy_usage=0.0,
-        cooling_status=True,
         fault_signals=0,
         route_travel_time=0.0,
         route_emissions=0.0,

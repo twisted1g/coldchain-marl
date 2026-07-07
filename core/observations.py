@@ -12,20 +12,25 @@ from core.state import GlobalState
 WEATHER_INDEX: dict[Weather, int] = {w: i for i, w in enumerate(Weather)}
 
 _TRANSIT_SCALE = float(config.EDGE_BASE_TRANSIT_TIME_RANGE[1])
-_EMISSIONS_SCALE = float(config.EDGE_DISTANCE_KM_RANGE[1] * config.EDGE_BASE_EMISSIONS_PER_KM)
+_EMISSIONS_SCALE = float(
+    config.EDGE_DISTANCE_KM_RANGE[1] * config.EDGE_BASE_EMISSIONS_PER_KM
+)
 _EDGE_FEATURES = 5
 
 
 def _traffic_status(state: GlobalState) -> float:
     n = sum(
-        1 for d in state.active_disruptions if d.type is DisruptionType.INCREASED_TRANSIT
+        1
+        for d in state.active_disruptions
+        if d.type is DisruptionType.INCREASED_TRANSIT
     )
     return min(1.0, n / 5.0)
 
 
 def _route_status(state: GlobalState) -> float:
     blocked_at_current = any(
-        d.type is DisruptionType.BLOCKED_NODE and d.target == state.shipment.current_node
+        d.type is DisruptionType.BLOCKED_NODE
+        and d.target == state.shipment.current_node
         for d in state.active_disruptions
     )
     return 1.0 if blocked_at_current else 0.0
@@ -35,16 +40,9 @@ def _breakdown_alerts(state: GlobalState) -> float:
     return 1.0 if state.fault_signals > 0 else 0.0
 
 
-def _location_index(state: GlobalState) -> float:
+def _node_index(state: GlobalState, node: str) -> float:
     nodes = list(state.graph.nodes)
-    denom = max(1, len(nodes) - 1)
-    return nodes.index(state.shipment.current_node) / denom
-
-
-def _target_index(state: GlobalState) -> float:
-    nodes = list(state.graph.nodes)
-    denom = max(1, len(nodes) - 1)
-    return nodes.index(state.shipment.target_node) / denom
+    return nodes.index(node) / max(1, len(nodes) - 1)
 
 
 def _routing_edge_features(state: GlobalState) -> list[float]:
@@ -52,7 +50,9 @@ def _routing_edge_features(state: GlobalState) -> list[float]:
     edges = list(state.graph.out_edges(s.current_node, data=True))
     feats: list[float] = []
     for _, target, data in edges[: config.N_NEXT_NODES]:
-        reaches = target == s.target_node or nx.has_path(state.graph, target, s.target_node)
+        reaches = target == s.target_node or nx.has_path(
+            state.graph, target, s.target_node
+        )
         feats.extend(
             [
                 float(data["base_transit_time"]) / _TRANSIT_SCALE,
@@ -75,8 +75,8 @@ def routing_obs(state: GlobalState) -> np.ndarray:
             s.perishability_index,
             _route_status(state),
             s.spoilage_risk,
-            _location_index(state),
-            _target_index(state),
+            _node_index(state, s.current_node),
+            _node_index(state, s.target_node),
             *_routing_edge_features(state),
         ],
         dtype=np.float32,
@@ -103,7 +103,9 @@ def spoilage_obs(state: GlobalState) -> np.ndarray:
 
 def inventory_obs(state: GlobalState) -> np.ndarray:
     s = state.shipment
-    shelf_remaining = max(0, get_params(s.fruit_type).base_shelf_life_ticks - s.age_ticks)
+    shelf_remaining = max(
+        0, get_params(s.fruit_type).base_shelf_life_ticks - s.age_ticks
+    )
     return np.array(
         [
             state.inventory_level,

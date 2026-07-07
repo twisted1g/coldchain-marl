@@ -28,7 +28,10 @@ def node_delay(state: GlobalState, node: str) -> float:
     for d in state.active_disruptions:
         if d.type is DisruptionType.BLOCKED_NODE and d.target == node:
             total += 1.0
-        elif d.type is DisruptionType.INCREASED_TRANSIT and d.target.split("->")[-1] == node:
+        elif (
+            d.type is DisruptionType.INCREASED_TRANSIT
+            and d.target.split("->")[-1] == node
+        ):
             total += float(d.transit_delta)
     return min(1.0, total / _DELAY_SCALE)
 

@@ -42,7 +42,9 @@ class ColdChainParallelEnv(ParallelEnv):
         options: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         active_seed = seed if seed is not None else self._seed
-        self._state = init_state(seed=active_seed, max_steps=self._max_steps, fruit=self._fruit)
+        self._state = init_state(
+            seed=active_seed, max_steps=self._max_steps, fruit=self._fruit
+        )
         self.agents = list(self.possible_agents)
         observations = all_obs(self._state)
         infos = {agent: {} for agent in self.possible_agents}

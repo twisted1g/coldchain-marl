@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch_geometric.nn import SAGEConv, global_mean_pool
 
 from core.graph_features import SPOILAGE_NODE_FEATURES
@@ -11,7 +11,7 @@ GNN_EMBED_DIM = 64
 
 
 class SpoilageGNN(nn.Module):
-    """GraphSAGE encoder (paper Alg 3): node-feature graph X=[N, 4] -> mean-pooled embedding z."""
+    """GraphSAGE encoder (paper Alg 3): X=[N, 4] -> mean-pooled embedding z."""
 
     def __init__(
         self,
@@ -37,7 +37,7 @@ class SpoilageGNN(nn.Module):
 
 
 class SpoilagePretrainModel(nn.Module):
-    """Encoder + linear head for supervised offline pretraining; only the encoder is kept."""
+    """Encoder + linear head for supervised pretraining; only the encoder is kept."""
 
     def __init__(self, embed_dim: int = GNN_EMBED_DIM) -> None:
         super().__init__()

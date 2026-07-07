@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 from core.config import DELIVERY_AGENTS, FruitKey
 from core.fruits import get_params
@@ -40,8 +41,7 @@ RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
 
 def _dynamic_pareto(costs: list[float]) -> float:
-    """Paper Alg 1-5 context-aware weights: ω_j = c_j / Σ c_k (static α folded into c_j),
-    returning the weighted objective cost Σ ω_j·c_j (emphasizes the currently-worst objective)."""
+    """Paper Alg 1-5 context-aware weights w_j = c_j/sum(c): returns sum(w_j*c_j)."""
     total = sum(costs)
     if total <= 0.0:
         return 0.0
@@ -68,7 +68,10 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             "routing": self._routing_reward,
             "spoilage": self._spoilage_reward,
             "inventory": self._inventory_reward,
-            **{name: partial(self._delivery_reward, i) for i, name in enumerate(DELIVERY_AGENTS)},
+            **{
+                name: partial(self._delivery_reward, i)
+                for i, name in enumerate(DELIVERY_AGENTS)
+            },
         }
         learners = config.get("learners", DEFAULT_LEARNERS)
         self._reward_methods = {a: supported[a] for a in learners}
@@ -140,7 +143,11 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
                 SPOILAGE_INSPECTION_WEIGHT * pred,
             ]
         )
-        return reward, {"fn_rate": false_negative, "y_pred": pred, "spoilage_label": label}
+        return reward, {
+            "fn_rate": false_negative,
+            "y_pred": pred,
+            "spoilage_label": label,
+        }
 
     def _inventory_reward(self) -> tuple[float, dict[str, float]]:
         s = self._state

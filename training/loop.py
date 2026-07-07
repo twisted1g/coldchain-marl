@@ -21,7 +21,12 @@ def collect_and_learn(
             next_obs, rewards, terminated, truncated, _ = env.step(actions)
             for a in agents:
                 agents[a].observe(
-                    obs[a], actions[a], rewards[a], next_obs[a], terminated[a], truncated[a]
+                    obs[a],
+                    actions[a],
+                    rewards[a],
+                    next_obs[a],
+                    terminated[a],
+                    truncated[a],
                 )
                 if learn:
                     agents[a].update()

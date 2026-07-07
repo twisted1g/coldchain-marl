@@ -3,7 +3,6 @@ from __future__ import annotations
 from enum import Enum
 from typing import Final
 
-
 N_EPISODES_FULL: Final[int] = 10_000
 N_EPISODES_DEFAULT: Final[int] = 200
 
@@ -147,5 +146,5 @@ OBS_FIELDS_BY_AGENT: Final[dict[str, tuple[str, ...]]] = {
     "temperature": TEMPERATURE_OBS_FIELDS,
     "spoilage": SPOILAGE_OBS_FIELDS,
     "inventory": INVENTORY_OBS_FIELDS,
-    **{name: DELIVERY_OBS_FIELDS for name in DELIVERY_AGENTS},
+    **dict.fromkeys(DELIVERY_AGENTS, DELIVERY_OBS_FIELDS),
 }

@@ -51,14 +51,11 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     if done:
         state.shipment.ground_truth_label = risk_to_label(state.shipment.spoilage_risk)
 
-    if state.customer_window_ticks > 0:
-        state.customer_window_ticks -= 1
-
     observations = all_obs(state)
-    rewards = {agent: 0.0 for agent in OBS_FIELDS_BY_AGENT}
-    terminated = {agent: done for agent in OBS_FIELDS_BY_AGENT}
+    rewards = dict.fromkeys(OBS_FIELDS_BY_AGENT, 0.0)
+    terminated = dict.fromkeys(OBS_FIELDS_BY_AGENT, done)
     terminated["__all__"] = done
-    truncated = {agent: False for agent in OBS_FIELDS_BY_AGENT}
+    truncated = dict.fromkeys(OBS_FIELDS_BY_AGENT, False)
     truncated["__all__"] = False
     infos = _build_infos(state, delivered)
 
@@ -95,7 +92,9 @@ def _apply_temperature_action(state: GlobalState, action: Any) -> None:
         return
     value = float(np.asarray(action).flatten()[0])
     state.shipment.desired_temperature_c = float(
-        np.clip(value, config.TEMPERATURE_ACTION_LOW_C, config.TEMPERATURE_ACTION_HIGH_C)
+        np.clip(
+            value, config.TEMPERATURE_ACTION_LOW_C, config.TEMPERATURE_ACTION_HIGH_C
+        )
     )
 
 
@@ -112,7 +111,11 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
     level = state.inventory_level + order * config.INVENTORY_RESTOCK_SCALE
     demand = max(
         0.0,
-        float(state.inventory_rng.normal(state.demand_forecast, config.INVENTORY_DEMAND_SIGMA)),
+        float(
+            state.inventory_rng.normal(
+                state.demand_forecast, config.INVENTORY_DEMAND_SIGMA
+            )
+        ),
     )
     sold = min(level, demand)
     state.unmet_demand = demand - sold
