@@ -20,6 +20,47 @@ from training.gnn import GNN_EMBED_DIM, SpoilageGNN
 Action = np.ndarray | np.integer | int
 
 
+def _mlp(dims: list[int], *, final_activation: nn.Module | None = None) -> nn.Sequential:
+    """Feed-forward net over ``dims`` (in, *hidden, out). ReLU between hidden layers,
+    no activation after the output linear unless ``final_activation`` is given."""
+    layers: list[nn.Module] = []
+    for i in range(len(dims) - 1):
+        layers.append(nn.Linear(dims[i], dims[i + 1]))
+        if i < len(dims) - 2:
+            layers.append(nn.ReLU())
+    if final_activation is not None:
+        layers.append(final_activation)
+    return nn.Sequential(*layers)
+
+
+def _transition_td(
+    obs: np.ndarray,
+    action: torch.Tensor,
+    reward: float,
+    next_obs: np.ndarray,
+    terminated: bool,
+    truncated: bool,
+) -> TensorDict:
+    """One replay-buffer transition in TorchRL's (obs, action, next) layout. ``action``
+    is pre-encoded by the caller (float for DDPG, long for DQN)."""
+    return TensorDict(
+        {
+            "observation": torch.as_tensor(obs, dtype=torch.float32),
+            "action": action,
+            "next": TensorDict(
+                {
+                    "observation": torch.as_tensor(next_obs, dtype=torch.float32),
+                    "reward": torch.tensor([reward], dtype=torch.float32),
+                    "done": torch.tensor([terminated or truncated], dtype=torch.bool),
+                    "terminated": torch.tensor([terminated], dtype=torch.bool),
+                },
+                batch_size=[],
+            ),
+        },
+        batch_size=[],
+    )
+
+
 @runtime_checkable
 class Agent(Protocol):
     """One decision-maker in the CTDE loop.
@@ -108,13 +149,7 @@ class _ScaledActor(nn.Module):
 
     def __init__(self, obs_dim: int, act_dim: int, hidden: list[int], low: np.ndarray, high: np.ndarray) -> None:
         super().__init__()
-        layers: list[nn.Module] = []
-        prev = obs_dim
-        for h in hidden:
-            layers += [nn.Linear(prev, h), nn.ReLU()]
-            prev = h
-        layers += [nn.Linear(prev, act_dim), nn.Tanh()]
-        self.net = nn.Sequential(*layers)
+        self.net = _mlp([obs_dim, *hidden, act_dim], final_activation=nn.Tanh())
         self.register_buffer("_low", torch.as_tensor(low, dtype=torch.float32))
         self.register_buffer("_high", torch.as_tensor(high, dtype=torch.float32))
 
@@ -126,13 +161,7 @@ class _ScaledActor(nn.Module):
 class _QNet(nn.Module):
     def __init__(self, obs_dim: int, act_dim: int, hidden: list[int]) -> None:
         super().__init__()
-        layers: list[nn.Module] = []
-        prev = obs_dim + act_dim
-        for h in hidden:
-            layers += [nn.Linear(prev, h), nn.ReLU()]
-            prev = h
-        layers += [nn.Linear(prev, 1)]
-        self.net = nn.Sequential(*layers)
+        self.net = _mlp([obs_dim + act_dim, *hidden, 1])
 
     def forward(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         return self.net(torch.cat([obs, action], dim=-1))
@@ -184,23 +213,16 @@ class DDPGAgent:
         terminated: bool,
         truncated: bool,
     ) -> None:
-        td = TensorDict(
-            {
-                "observation": torch.as_tensor(obs, dtype=torch.float32),
-                "action": torch.as_tensor(action, dtype=torch.float32),
-                "next": TensorDict(
-                    {
-                        "observation": torch.as_tensor(next_obs, dtype=torch.float32),
-                        "reward": torch.tensor([reward], dtype=torch.float32),
-                        "done": torch.tensor([terminated or truncated], dtype=torch.bool),
-                        "terminated": torch.tensor([terminated], dtype=torch.bool),
-                    },
-                    batch_size=[],
-                ),
-            },
-            batch_size=[],
+        self._rb.add(
+            _transition_td(
+                obs,
+                torch.as_tensor(action, dtype=torch.float32),
+                reward,
+                next_obs,
+                terminated,
+                truncated,
+            )
         )
-        self._rb.add(td)
 
     def update(self) -> dict[str, float]:
         if len(self._rb) < self._warmup:
@@ -225,21 +247,6 @@ class DDPGAgent:
         self._actor.load_state_dict(torch.load(path / "actor.pt", weights_only=True))
 
 
-class _MLP(nn.Module):
-    def __init__(self, obs_dim: int, out_dim: int, hidden: list[int]) -> None:
-        super().__init__()
-        layers: list[nn.Module] = []
-        prev = obs_dim
-        for h in hidden:
-            layers += [nn.Linear(prev, h), nn.ReLU()]
-            prev = h
-        layers += [nn.Linear(prev, out_dim)]
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.net(obs)
-
-
 class DQNAgent:
     """Discrete-action agent on TorchRL's DQNLoss with epsilon-greedy exploration.
 
@@ -249,7 +256,7 @@ class DQNAgent:
 
     def __init__(self, obs_dim: int, action_space: Discrete, cfg: dict[str, Any]) -> None:
         self._n = int(action_space.n)
-        net = _MLP(obs_dim, self._n, list(cfg["hidden"]))
+        net = _mlp([obs_dim, *list(cfg["hidden"]), self._n])
         self._qnet = QValueActor(
             module=net, in_keys=["observation"], spec=Categorical(self._n), action_space="categorical"
         )
@@ -289,23 +296,16 @@ class DQNAgent:
         terminated: bool,
         truncated: bool,
     ) -> None:
-        td = TensorDict(
-            {
-                "observation": torch.as_tensor(obs, dtype=torch.float32),
-                "action": torch.tensor(int(action), dtype=torch.long),
-                "next": TensorDict(
-                    {
-                        "observation": torch.as_tensor(next_obs, dtype=torch.float32),
-                        "reward": torch.tensor([reward], dtype=torch.float32),
-                        "done": torch.tensor([terminated or truncated], dtype=torch.bool),
-                        "terminated": torch.tensor([terminated], dtype=torch.bool),
-                    },
-                    batch_size=[],
-                ),
-            },
-            batch_size=[],
+        self._rb.add(
+            _transition_td(
+                obs,
+                torch.tensor(int(action), dtype=torch.long),
+                reward,
+                next_obs,
+                terminated,
+                truncated,
+            )
         )
-        self._rb.add(td)
 
     def update(self) -> dict[str, float]:
         if len(self._rb) < self._warmup:
