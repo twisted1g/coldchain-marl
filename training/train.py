@@ -82,11 +82,6 @@ def _compare(learners: list[str]) -> None:
     print("\ntrained vs random:")
     for a in learners:
         metric_key, direction = METRIC[a]
-        # Ceteris-paribus: measure the primary agent against a FIXED frozen (no-op) backdrop,
-        # swapping only the primary trained-vs-random. Co-learners must be identical in both
-        # arms; a frozen no-op backdrop is deterministic AND keeps the world non-trivial
-        # (e.g. leaves temperature uncontrolled so spoilage risk exists to predict). Loading
-        # co-learners as trained suppresses that risk; loading them untrained is nondeterministic.
         solo = [a]
         env = ColdChainTrainingEnv(env_config(COMPARE_SEED, solo))
         trained = build_agents(env, solo)

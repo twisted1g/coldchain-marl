@@ -28,7 +28,6 @@ METRIC = {
     "inventory": ("inventory_cost", "min"),
 }
 
-# Learners trained this run; override via `train.py --agents`. Rest stay frozen.
 LEARNERS = ["temperature", "routing", "spoilage", "inventory"]
 
 FRUIT = "banana"
@@ -60,7 +59,6 @@ DQN_CFG: dict[str, Any] = {
     "eps_decay_steps": 2000,
 }
 
-# Spoilage DDPG head runs on the frozen GNN embedding (paper Alg 3); same DDPG hypers.
 SPOILAGE_CFG: dict[str, Any] = dict(DDPG_CFG)
 
 ALGO_CFG = {"DDPG": DDPG_CFG, "DQN": DQN_CFG, "SPOILAGE_GNN": SPOILAGE_CFG}

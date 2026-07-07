@@ -95,8 +95,6 @@ def _apply_temperature_action(state: GlobalState, action: Any) -> None:
 
 
 def _apply_inventory_action(state: GlobalState, action: Any) -> None:
-    """Order (restock) then serve stochastic demand (paper Alg 4). Demand is drawn from the
-    dedicated ``inventory_rng`` so it never shifts the shared world rng stream."""
     if action is None:
         return
     order = float(

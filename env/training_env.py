@@ -22,18 +22,10 @@ ROUTE_EMISSIONS_WEIGHT = 0.1
 ROUTE_RISK_WEIGHT = 10.0
 DELIVERY_BONUS = 100.0
 
-# Spoilage reward (paper Alg 3), static weights for now: prediction error + a heavy
-# false-negative penalty (missed spoilage is the costly failure) + inspection cost so the
-# agent cannot trivially cry wolf. Dynamic Pareto weights come in a later item.
 SPOILAGE_PRED_WEIGHT = 3.0
 SPOILAGE_FN_WEIGHT = 5.0
 SPOILAGE_INSPECTION_WEIGHT = 0.2
 
-# Inventory reward (paper Alg 4), static weights for now: r = -(w1*L_spoil + w2*H + w3*E).
-# NOTE (documented): Alg 4 as published has no service/stockout term, so the optimal policy
-# is to order ~nothing (all three costs -> 0). Faithful to the paper box; an unmet_demand
-# penalty is the lever to make it a genuine over/under-stock balance (deferred, like the
-# spoilage `age` feature). Weights are starting points — tune by curves.
 INVENTORY_SPOILAGE_WEIGHT = 5.0
 INVENTORY_HOLDING_WEIGHT = 1.0
 INVENTORY_EMISSIONS_WEIGHT = 1.0
@@ -44,10 +36,8 @@ RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 class ColdChainTrainingEnv(ColdChainParallelEnv):
     """Cold-chain env that shapes rewards for the trainable ("learner") agents.
 
-    Each learner's reward is computed by its own ``_<agent>_reward`` method; the
-    frozen agents keep the core's zero reward. The fruit is fixed so the ideal
-    band is stationary, and episodes follow a deterministic seed sequence for
-    reproducible curves. To train a new agent: add its reward method, register it
+    Each learner's reward comes from its own ``_<agent>_reward`` method; frozen agents
+    keep the core's zero reward. To add a learner: define its reward method, register it
     in ``self._reward_methods``, and list it in training.config.LEARNERS.
     """
 
@@ -70,8 +60,6 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._prev: dict[str, float] = {}
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
-        # Deterministic per-episode seed sequence for reproducible curves; an explicit
-        # caller seed (Gymnasium API) overrides it when given.
         episode_seed = self._base_seed + self._episode_index if seed is None else seed
         obs, infos = super().reset(seed=episode_seed)
         self._episode_index += 1
@@ -137,9 +125,9 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
 
     def _inventory_reward(self) -> tuple[float, dict[str, float]]:
         s = self._state
-        spoilage_loss = s.inventory_level * s.shipment.spoilage_risk  # overstocked perishables
+        spoilage_loss = s.inventory_level * s.shipment.spoilage_risk
         holding = s.inventory_level
-        emissions = s.inventory_order  # restock/delivery emissions
+        emissions = s.inventory_order
         cost = (
             INVENTORY_SPOILAGE_WEIGHT * spoilage_loss
             + INVENTORY_HOLDING_WEIGHT * holding

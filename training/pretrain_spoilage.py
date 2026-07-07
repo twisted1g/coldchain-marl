@@ -16,10 +16,6 @@ from core.state import init_state
 from training.config import SPOILAGE_ENCODER_PATH
 from training.gnn import SpoilagePretrainModel
 
-# Offline precompute: the GNN encoder is trained supervised against Arrhenius spoilage
-# labels y, then frozen (paper Alg 3 — "pre-trained GNN encoder"). The RL agent never
-# reads the ground-truth risk; it infers from the node features [T, H, delay, fruit].
-
 SEED = 0
 N_EPISODES = 1200
 EPISODE_MAX_STEPS = 20

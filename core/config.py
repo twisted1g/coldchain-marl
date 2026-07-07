@@ -7,8 +7,6 @@ from typing import Final
 N_EPISODES_FULL: Final[int] = 10_000
 N_EPISODES_DEFAULT: Final[int] = 200
 
-# Random episode length for the offline synthetic dataset. Distinct from the fixed
-# training cap env.training_env.DEFAULT_MAX_STEPS.
 EPISODE_LEN_MIN: Final[int] = 10
 EPISODE_LEN_MAX: Final[int] = 20
 
@@ -30,7 +28,6 @@ WAIT_EDGE_EMISSIONS: Final[float] = 0.0
 N_NEXT_NODES: Final[int] = 5
 N_RISK_LEVELS: Final[int] = 3
 N_DELIVERY_WINDOWS: Final[int] = 4
-# Spoilage action = continuous predicted risk / inspection threshold (paper Alg 3).
 SPOILAGE_ACTION_LOW: Final[float] = 0.0
 SPOILAGE_ACTION_HIGH: Final[float] = 1.0
 TEMPERATURE_ACTION_LOW_C: Final[float] = -30.0
@@ -38,11 +35,6 @@ TEMPERATURE_ACTION_HIGH_C: Final[float] = 30.0
 INVENTORY_ACTION_LOW: Final[float] = 0.0
 INVENTORY_ACTION_HIGH: Final[float] = 1.0
 
-# Inventory dynamics (paper Alg 4). Stock is consumed by stochastic per-tick demand and
-# replenished by the agent's continuous order quantity, so the level is a real controlled
-# variable (not the old pinned 1.0). Demand noise is drawn from a DEDICATED rng seeded off
-# INVENTORY_RNG_OFFSET so it never perturbs the shared world rng stream that the
-# temperature/routing/spoilage agents depend on.
 INVENTORY_INIT_LEVEL: Final[float] = 1.0
 INVENTORY_DEMAND_MEAN: Final[float] = 0.15
 INVENTORY_DEMAND_SIGMA: Final[float] = 0.05
@@ -61,9 +53,6 @@ KELVIN_OFFSET: Final[float] = 273.15
 
 RISK_LABEL_THRESHOLD: Final[float] = 0.5
 
-# Humidity dynamics + spoilage coupling. Sensor humidity drifts toward the weather-driven
-# ambient humidity; deviation outside a fruit's optimal band and node transit delay both
-# add to the Arrhenius spoilage rate (so the H and delay node features carry real signal).
 HUMIDITY_AMBIENT_PULL: Final[float] = 0.15
 HUMIDITY_NOISE_SIGMA: Final[float] = 0.03
 HUMIDITY_SEVERITY_SCALE: Final[float] = 0.3
@@ -125,9 +114,6 @@ TEMPERATURE_OBS_FIELDS: Final[tuple[str, ...]] = (
     "fault_signals",
 )
 
-# Spoilage observation is the flattened per-node GNN feature matrix X [N_NODES, 4]
-# = [T, H, delay, fruit_type] (paper Alg 3). The agent's frozen encoder infers risk
-# from these; the Arrhenius ground-truth risk is deliberately NOT exposed (anti-leak).
 SPOILAGE_OBS_FIELDS: Final[tuple[str, ...]] = tuple(
     f"node{i}_{name}"
     for i in range(N_NODES)

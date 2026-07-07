@@ -48,10 +48,6 @@ def _target_index(state: GlobalState) -> float:
 
 
 def _routing_edge_features(state: GlobalState) -> list[float]:
-    """Per-action-slot edge features in the same order ``_apply_routing_action``
-    indexes ``out_edges``. Each slot: [transit_norm, emissions_norm,
-    reaches_target, is_target, is_wait]. Missing slots are zero-padded so the
-    agent sees them as dead ends (reaches_target = 0)."""
     s = state.shipment
     edges = list(state.graph.out_edges(s.current_node, data=True))
     feats: list[float] = []
@@ -102,8 +98,6 @@ def temperature_obs(state: GlobalState) -> np.ndarray:
 
 
 def spoilage_obs(state: GlobalState) -> np.ndarray:
-    """Flattened per-node GNN feature matrix X [N_NODES, 4] (paper Alg 3). The Arrhenius
-    ground-truth risk is intentionally excluded — the agent's frozen encoder infers it."""
     return spoilage_node_features(state).flatten()
 
 

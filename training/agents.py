@@ -21,8 +21,6 @@ Action = np.ndarray | np.integer | int
 
 
 def _mlp(dims: list[int], *, final_activation: nn.Module | None = None) -> nn.Sequential:
-    """Feed-forward net over ``dims`` (in, *hidden, out). ReLU between hidden layers,
-    no activation after the output linear unless ``final_activation`` is given."""
     layers: list[nn.Module] = []
     for i in range(len(dims) - 1):
         layers.append(nn.Linear(dims[i], dims[i + 1]))
@@ -41,8 +39,6 @@ def _transition_td(
     terminated: bool,
     truncated: bool,
 ) -> TensorDict:
-    """One replay-buffer transition in TorchRL's (obs, action, next) layout. ``action``
-    is pre-encoded by the caller (float for DDPG, long for DQN)."""
     return TensorDict(
         {
             "observation": torch.as_tensor(obs, dtype=torch.float32),
@@ -63,12 +59,7 @@ def _transition_td(
 
 @runtime_checkable
 class Agent(Protocol):
-    """One decision-maker in the CTDE loop.
-
-    ``act`` runs on local observations (decentralized execution); ``observe`` +
-    ``update`` train the policy with whatever algorithm the agent implements.
-    Frozen agents implement ``observe``/``update`` as no-ops.
-    """
+    """One decision-maker in the CTDE loop."""
 
     def act(self, obs: np.ndarray, *, explore: bool) -> Action: ...
 
@@ -90,11 +81,7 @@ class Agent(Protocol):
 
 
 class FrozenAgent:
-    """Non-trainable policy emitting a constant action: Discrete->0, Box->midpoint.
-
-    Matches the frozen-agent semantics used before the CTDE migration so
-    unfrozen agents can be verified against a stable backdrop.
-    """
+    """Non-trainable policy emitting a constant action: Discrete->0, Box->midpoint."""
 
     def __init__(self, action_space: Box | Discrete) -> None:
         self._action_space = action_space
@@ -145,8 +132,6 @@ class RandomAgent:
 
 
 class _ScaledActor(nn.Module):
-    """MLP with tanh head affinely mapped onto the Box action range."""
-
     def __init__(self, obs_dim: int, act_dim: int, hidden: list[int], low: np.ndarray, high: np.ndarray) -> None:
         super().__init__()
         self.net = _mlp([obs_dim, *hidden, act_dim], final_activation=nn.Tanh())
@@ -168,11 +153,7 @@ class _QNet(nn.Module):
 
 
 class DDPGAgent:
-    """Continuous-action agent (paper Algorithm 2) on TorchRL's DDPGLoss.
-
-    Off-policy actor-critic: deterministic actor + Q-critic with target networks,
-    Gaussian exploration noise, and its own replay buffer.
-    """
+    """Continuous-action DDPG agent (paper Algorithm 2) on TorchRL's DDPGLoss."""
 
     def __init__(self, obs_dim: int, action_space: Box, cfg: dict[str, Any]) -> None:
         self._act_space = action_space
@@ -248,11 +229,7 @@ class DDPGAgent:
 
 
 class DQNAgent:
-    """Discrete-action agent on TorchRL's DQNLoss with epsilon-greedy exploration.
-
-    Paper Algorithm 1 uses tabular Q-learning for routing; we use DQN for
-    compatibility with the shared TorchRL training stack (documented deviation).
-    """
+    """Discrete-action DQN agent (paper Algorithm 1) with epsilon-greedy exploration."""
 
     def __init__(self, obs_dim: int, action_space: Discrete, cfg: dict[str, Any]) -> None:
         self._n = int(action_space.n)
@@ -328,15 +305,7 @@ class DQNAgent:
 
 
 class SpoilageAgent:
-    """Spoilage agent (paper Algorithm 3): a frozen pre-trained GraphSAGE encoder feeding
-    a DDPG actor-critic on the graph embedding.
-
-    The observation is the flattened per-node feature matrix X [N, 4]; the agent encodes it
-    to z = f_GNN(G, X) (the paper's RL state s0) and runs DDPG on z. The action is a
-    continuous spoilage-risk prediction / inspection threshold in [0, 1]. The encoder is
-    trained offline against precomputed labels and frozen here, so encoding an observation
-    is deterministic and the embeddings can be stored in the replay buffer directly.
-    """
+    """Spoilage agent (paper Algorithm 3): frozen GraphSAGE encoder feeding a DDPG head."""
 
     def __init__(self, obs_dim: int, action_space: Box, cfg: dict[str, Any], encoder_path: Path) -> None:
         self._n_nodes = obs_dim // SPOILAGE_NODE_FEATURES
@@ -345,7 +314,6 @@ class SpoilageAgent:
         self._encoder.eval()
         for p in self._encoder.parameters():
             p.requires_grad_(False)
-        # Topology is static across episodes, so a single edge index serves every graph.
         graph = build_supply_chain(np.random.default_rng(0))
         self._edge_index = torch.as_tensor(static_edge_index(graph), dtype=torch.long)
         self._ddpg = DDPGAgent(GNN_EMBED_DIM, action_space, cfg)
@@ -376,7 +344,6 @@ class SpoilageAgent:
         return self._ddpg.update()
 
     def save(self, path: Path) -> None:
-        # Encoder is a separate frozen artifact from the offline pretrain; only the DDPG head trains.
         self._ddpg.save(path)
 
     def load(self, path: Path) -> None:

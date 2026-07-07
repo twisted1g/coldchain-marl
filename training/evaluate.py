@@ -13,12 +13,7 @@ def rollout(
     n_episodes: int,
     metric_key: str,
 ) -> tuple[float, float]:
-    """Return (mean episode return, mean per-episode metric) for one agent.
-
-    All agents act greedily (deterministic); swap ``primary`` for a RandomAgent
-    to get the random baseline. Only ``primary``'s shaped reward and metric are
-    measured.
-    """
+    """Return (mean episode return, mean per-episode metric) for ``primary``, acting greedily."""
     returns: list[float] = []
     metrics: list[float] = []
     for _ in range(n_episodes):
