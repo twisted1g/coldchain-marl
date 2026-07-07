@@ -5,7 +5,6 @@ import numpy as np
 
 from core import config
 
-
 NodeKind = str
 
 

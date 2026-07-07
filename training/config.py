@@ -5,9 +5,11 @@ from typing import Any
 
 import numpy as np
 
-from core.config import OBS_FIELDS_BY_AGENT
+from core import config as core_config
+from core.config import DELIVERY_AGENTS, OBS_FIELDS_BY_AGENT
 from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
 from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent, SpoilageAgent
+from training.maddpg import DeliveryHandle, MADDPGDelivery
 
 SEED = 0
 NUM_ITERATIONS = 150
@@ -20,15 +22,17 @@ ALGO = {
     "routing": "DQN",
     "spoilage": "SPOILAGE_GNN",
     "inventory": "DDPG",
+    **dict.fromkeys(DELIVERY_AGENTS, "MADDPG"),
 }
 METRIC = {
     "temperature": ("temp_deviation", "min"),
     "routing": ("route_cost", "min"),
     "spoilage": ("fn_rate", "min"),
     "inventory": ("inventory_cost", "min"),
+    **dict.fromkeys(DELIVERY_AGENTS, ("delivery_cost", "min")),
 }
 
-LEARNERS = ["temperature", "routing", "spoilage", "inventory"]
+LEARNERS = ["temperature", "routing", "spoilage", "inventory", *DELIVERY_AGENTS]
 
 FRUIT = "banana"
 TRAIN_SEED = 1000
@@ -61,7 +65,20 @@ DQN_CFG: dict[str, Any] = {
 
 SPOILAGE_CFG: dict[str, Any] = dict(DDPG_CFG)
 
-ALGO_CFG = {"DDPG": DDPG_CFG, "DQN": DQN_CFG, "SPOILAGE_GNN": SPOILAGE_CFG}
+MADDPG_CFG: dict[str, Any] = {
+    k: v for k, v in DDPG_CFG.items() if k != "noise_sigma"
+} | {
+    "gumbel_tau_start": 1.0,
+    "gumbel_tau_end": 0.3,
+    "gumbel_tau_decay_steps": 30_000,
+}
+
+ALGO_CFG = {
+    "DDPG": DDPG_CFG,
+    "DQN": DQN_CFG,
+    "SPOILAGE_GNN": SPOILAGE_CFG,
+    "MADDPG": MADDPG_CFG,
+}
 
 ARTIFACTS = Path(__file__).resolve().parent.parent / "artifacts"
 MODULES_DIR = ARTIFACTS / "modules"
@@ -74,7 +91,12 @@ def module_dir(agent: str) -> Path:
 
 
 def env_config(base_seed: int, learners: list[str]) -> dict[str, Any]:
-    return {"fruit": FRUIT, "max_steps": DEFAULT_MAX_STEPS, "base_seed": base_seed, "learners": list(learners)}
+    return {
+        "fruit": FRUIT,
+        "max_steps": DEFAULT_MAX_STEPS,
+        "base_seed": base_seed,
+        "learners": list(learners),
+    }
 
 
 def _build_learner(agent: str, env: ColdChainTrainingEnv) -> Agent:
@@ -86,16 +108,44 @@ def _build_learner(agent: str, env: ColdChainTrainingEnv) -> Agent:
         return DQNAgent(obs_dim, env.action_space(agent), ALGO_CFG["DQN"])
     if algo == "SPOILAGE_GNN":
         return SpoilageAgent(
-            obs_dim, env.action_space(agent), ALGO_CFG["SPOILAGE_GNN"], SPOILAGE_ENCODER_PATH
+            obs_dim,
+            env.action_space(agent),
+            ALGO_CFG["SPOILAGE_GNN"],
+            SPOILAGE_ENCODER_PATH,
         )
-    raise NotImplementedError(f"Algorithm {algo!r} for agent {agent!r} not implemented yet")
+    raise NotImplementedError(
+        f"Algorithm {algo!r} for agent {agent!r} not implemented yet"
+    )
+
+
+def _build_delivery_group(
+    env: ColdChainTrainingEnv, delivery_learners: list[str]
+) -> dict[str, Agent]:
+    obs_dim = int(np.prod(env.observation_space(delivery_learners[0]).shape))
+    group = MADDPGDelivery(
+        n=len(delivery_learners),
+        obs_dim=obs_dim,
+        n_slots=core_config.N_DELIVERY_WINDOWS,
+        cfg=ALGO_CFG["MADDPG"],
+    )
+    return {name: DeliveryHandle(group, i) for i, name in enumerate(delivery_learners)}
 
 
 def build_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Agent]:
-    """All agents for the CTDE loop: learners get their algorithm, rest frozen."""
+    """All agents for the CTDE loop: learners get their algorithm, rest frozen.
+
+    Delivery learners share one MADDPGDelivery group (paper Alg 5 shared critic).
+    """
+    delivery_learners = [a for a in AGENTS if a in learners and a in DELIVERY_AGENTS]
+    delivery_agents = (
+        _build_delivery_group(env, delivery_learners) if delivery_learners else {}
+    )
+
     agents: dict[str, Agent] = {}
     for agent in AGENTS:
-        if agent in learners:
+        if agent in delivery_agents:
+            agents[agent] = delivery_agents[agent]
+        elif agent in learners:
             agents[agent] = _build_learner(agent, env)
         else:
             agents[agent] = FrozenAgent(env.action_space(agent))

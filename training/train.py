@@ -6,15 +6,16 @@ import csv
 import numpy as np
 import torch
 
+from core.config import DELIVERY_AGENTS
 from env.training_env import ColdChainTrainingEnv
 from training.agents import RandomAgent
 from training.config import (
     ARTIFACTS,
     COMPARE_SEED,
     CURVE_CSV,
+    EPISODES_PER_ITERATION,
     EVAL_EPISODES,
     EVAL_SEED,
-    EPISODES_PER_ITERATION,
     LEARNERS,
     METRIC,
     MODULES_DIR,
@@ -31,7 +32,12 @@ from training.loop import collect_and_learn
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train cold-chain agents (CTDE loop).")
-    p.add_argument("--agents", nargs="+", default=LEARNERS, help="learners to train; rest stay frozen")
+    p.add_argument(
+        "--agents",
+        nargs="+",
+        default=LEARNERS,
+        help="learners to train; rest stay frozen",
+    )
     return p.parse_args()
 
 
@@ -77,24 +83,47 @@ def main() -> None:
     print(f"\nsaved curve -> {CURVE_CSV}\nsaved modules -> {MODULES_DIR}")
 
 
+def _print_compare(
+    name: str, metric_key: str, direction: str, trained_m: float, random_m: float
+) -> None:
+    better = (random_m - trained_m) if direction == "min" else (trained_m - random_m)
+    margin = better / abs(random_m) if random_m else float("nan")
+    print(
+        f"  {name}: trained {metric_key}={trained_m:.3f}  "
+        f"random={random_m:.3f}  ({margin:+.0%})"
+    )
+
+
 def _compare(learners: list[str]) -> None:
-    """Trained-vs-random sanity check per learner on a held-out seed set."""
+    """Trained-vs-random sanity check per learner block on a held-out seed set."""
     print("\ntrained vs random:")
     for a in learners:
-        metric_key, direction = METRIC[a]
-        solo = [a]
-        env = ColdChainTrainingEnv(env_config(COMPARE_SEED, solo))
-        trained = build_agents(env, solo)
-        trained[a].load(module_dir(a))
-        _, trained_m = rollout(env, trained, a, EVAL_EPISODES, metric_key)
+        if a not in DELIVERY_AGENTS:
+            _compare_block(a, [a])
+    delivery = [a for a in learners if a in DELIVERY_AGENTS]
+    if delivery:
+        _compare_block("delivery", delivery)
 
-        rand = build_agents(env, solo)
+
+def _compare_block(name: str, block: list[str]) -> None:
+    """Compare one learner block (single agent, or delivery MADDPG vehicle group)."""
+    metric_key, direction = METRIC[block[0]]
+    env = ColdChainTrainingEnv(env_config(COMPARE_SEED, block))
+
+    trained = build_agents(env, block)
+    trained[block[0]].load(module_dir(block[0]))
+    trained_m = float(
+        np.mean([rollout(env, trained, a, EVAL_EPISODES, metric_key)[1] for a in block])
+    )
+
+    rand = build_agents(env, block)
+    for a in block:
         rand[a] = RandomAgent(env.action_space(a))
-        _, random_m = rollout(env, rand, a, EVAL_EPISODES, metric_key)
+    random_m = float(
+        np.mean([rollout(env, rand, a, EVAL_EPISODES, metric_key)[1] for a in block])
+    )
 
-        better = (random_m - trained_m) if direction == "min" else (trained_m - random_m)
-        margin = better / abs(random_m) if random_m else float("nan")
-        print(f"  {a}: trained {metric_key}={trained_m:.3f}  random={random_m:.3f}  ({margin:+.0%})")
+    _print_compare(name, metric_key, direction, trained_m, random_m)
 
 
 if __name__ == "__main__":

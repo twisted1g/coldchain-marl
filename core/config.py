@@ -3,7 +3,6 @@ from __future__ import annotations
 from enum import Enum
 from typing import Final
 
-
 N_EPISODES_FULL: Final[int] = 10_000
 N_EPISODES_DEFAULT: Final[int] = 200
 
@@ -28,6 +27,7 @@ WAIT_EDGE_EMISSIONS: Final[float] = 0.0
 N_NEXT_NODES: Final[int] = 5
 N_RISK_LEVELS: Final[int] = 3
 N_DELIVERY_WINDOWS: Final[int] = 4
+N_VEHICLES: Final[int] = 3
 SPOILAGE_ACTION_LOW: Final[float] = 0.0
 SPOILAGE_ACTION_HIGH: Final[float] = 1.0
 TEMPERATURE_ACTION_LOW_C: Final[float] = -30.0
@@ -129,6 +129,7 @@ INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (
 )
 
 DELIVERY_OBS_FIELDS: Final[tuple[str, ...]] = (
+    "vehicle_id",
     "vehicle_availability",
     "customer_window",
     "spoilage_risk",
@@ -136,10 +137,14 @@ DELIVERY_OBS_FIELDS: Final[tuple[str, ...]] = (
     "route_delays",
 )
 
+DELIVERY_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"delivery_{i}" for i in range(N_VEHICLES)
+)
+
 OBS_FIELDS_BY_AGENT: Final[dict[str, tuple[str, ...]]] = {
     "routing": ROUTING_OBS_FIELDS,
     "temperature": TEMPERATURE_OBS_FIELDS,
     "spoilage": SPOILAGE_OBS_FIELDS,
     "inventory": INVENTORY_OBS_FIELDS,
-    "delivery": DELIVERY_OBS_FIELDS,
+    **dict.fromkeys(DELIVERY_AGENTS, DELIVERY_OBS_FIELDS),
 }

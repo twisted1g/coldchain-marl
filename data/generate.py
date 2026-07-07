@@ -45,7 +45,9 @@ def generate_episode(master_seed: int, episode_id: int) -> EpisodeRecord:
     )
 
     for _ in range(state.max_steps):
-        actions = {name: space.sample() for name, space in sampled_action_spaces.items()}
+        actions = {
+            name: space.sample() for name, space in sampled_action_spaces.items()
+        }
         result = step(state, actions)
         episode.steps.append(
             StepRecord(
@@ -77,7 +79,9 @@ def _config_snapshot() -> dict[str, Any]:
         value = getattr(config, name)
         if isinstance(value, (int, float, str, bool)):
             snapshot[name] = value
-        elif isinstance(value, tuple) and all(isinstance(x, (int, float, str)) for x in value):
+        elif isinstance(value, tuple) and all(
+            isinstance(x, (int, float, str)) for x in value
+        ):
             snapshot[name] = list(value)
     return snapshot
 
@@ -138,12 +142,16 @@ def generate(master_seed: int, n_episodes: int, out_dir: Path) -> DatasetManifes
         config_snapshot=_config_snapshot(),
     )
     manifest_dict = _to_jsonable(asdict(manifest)) if is_dataclass(manifest) else {}
-    (out_dir / "manifest.json").write_text(json.dumps(manifest_dict, indent=2, sort_keys=True))
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest_dict, indent=2, sort_keys=True)
+    )
     return manifest
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate synthetic cold-chain episodes.")
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic cold-chain episodes."
+    )
     parser.add_argument("--seed", type=int, default=config.DEFAULT_SEED)
     parser.add_argument("--episodes", type=int, default=config.N_EPISODES_DEFAULT)
     parser.add_argument("--out", type=Path, default=Path("./dataset"))

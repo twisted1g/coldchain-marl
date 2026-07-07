@@ -39,8 +39,7 @@ class NoiseModel:
 
     def _sample_blocked_node(self, graph: nx.DiGraph) -> Disruption:
         candidates = [
-            n for n, data in graph.nodes(data=True)
-            if data["kind"] in ("hub", "dc")
+            n for n, data in graph.nodes(data=True) if data["kind"] in ("hub", "dc")
         ]
         target = str(self._rng.choice(candidates)) if candidates else ""
         return Disruption(type=DisruptionType.BLOCKED_NODE, target=target)

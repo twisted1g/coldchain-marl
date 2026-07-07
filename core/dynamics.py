@@ -8,6 +8,7 @@ import numpy as np
 from core import config
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
 from core.graph_features import node_delay
+from core.intention import IntentionBuffer
 from core.noise import NoiseModel
 from core.observations import all_obs
 from core.spoilage import ArrheniusSpoilage, risk_to_label
@@ -29,10 +30,14 @@ _spoilage_model = ArrheniusSpoilage()
 def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     state.tick += 1
 
+    buffer = IntentionBuffer()
+    buffer.declare_all(actions)
+    conflicts = buffer.detect()
+
     _apply_temperature_action(state, actions.get("temperature"))
     _apply_routing_action(state, actions.get("routing"))
     _apply_inventory_action(state, actions.get("inventory"))
-    _apply_delivery_action(state, actions.get("delivery"))
+    _apply_delivery_action(state, actions, conflicts)
     _apply_spoilage_action(state, actions.get("spoilage"))
 
     _advance_thermal_state(state)
@@ -46,14 +51,11 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     if done:
         state.shipment.ground_truth_label = risk_to_label(state.shipment.spoilage_risk)
 
-    if state.customer_window_ticks > 0:
-        state.customer_window_ticks -= 1
-
     observations = all_obs(state)
-    rewards = {agent: 0.0 for agent in OBS_FIELDS_BY_AGENT}
-    terminated = {agent: done for agent in OBS_FIELDS_BY_AGENT}
+    rewards = dict.fromkeys(OBS_FIELDS_BY_AGENT, 0.0)
+    terminated = dict.fromkeys(OBS_FIELDS_BY_AGENT, done)
     terminated["__all__"] = done
-    truncated = {agent: False for agent in OBS_FIELDS_BY_AGENT}
+    truncated = dict.fromkeys(OBS_FIELDS_BY_AGENT, False)
     truncated["__all__"] = False
     infos = _build_infos(state, delivered)
 
@@ -90,7 +92,9 @@ def _apply_temperature_action(state: GlobalState, action: Any) -> None:
         return
     value = float(np.asarray(action).flatten()[0])
     state.shipment.desired_temperature_c = float(
-        np.clip(value, config.TEMPERATURE_ACTION_LOW_C, config.TEMPERATURE_ACTION_HIGH_C)
+        np.clip(
+            value, config.TEMPERATURE_ACTION_LOW_C, config.TEMPERATURE_ACTION_HIGH_C
+        )
     )
 
 
@@ -107,7 +111,11 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
     level = state.inventory_level + order * config.INVENTORY_RESTOCK_SCALE
     demand = max(
         0.0,
-        float(state.inventory_rng.normal(state.demand_forecast, config.INVENTORY_DEMAND_SIGMA)),
+        float(
+            state.inventory_rng.normal(
+                state.demand_forecast, config.INVENTORY_DEMAND_SIGMA
+            )
+        ),
     )
     sold = min(level, demand)
     state.unmet_demand = demand - sold
@@ -115,12 +123,18 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
     state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
 
 
-def _apply_delivery_action(state: GlobalState, action: Any) -> None:
-    if action is None:
-        return
-    idx = int(action) % config.N_DELIVERY_WINDOWS
-    remaining_window = max(1, state.max_steps - state.tick)
-    state.customer_window_ticks = int(remaining_window * (idx + 1) / config.N_DELIVERY_WINDOWS)
+def _apply_delivery_action(
+    state: GlobalState, actions: dict[str, Any], conflicts: dict[str, bool]
+) -> None:
+    for i, vehicle in enumerate(state.vehicles):
+        action = actions.get(f"delivery_{i}")
+        slot = 0 if action is None else int(action) % config.N_DELIVERY_WINDOWS
+        vehicle.chosen_slot = slot
+        deadline = (slot + 1) / config.N_DELIVERY_WINDOWS * state.max_steps
+        vehicle.delay = max(0.0, vehicle.route_transit - deadline)
+        vehicle.sla_violated = vehicle.route_transit > deadline
+        vehicle.emissions = vehicle.route_emissions
+        vehicle.conflict = conflicts.get(f"delivery_{i}", False)
 
 
 def _apply_spoilage_action(state: GlobalState, action: Any) -> None:
@@ -172,7 +186,7 @@ def _build_infos(
     state: GlobalState,
     delivered: bool,
 ) -> dict[str, dict[str, Any]]:
-    return {
+    infos = {
         "routing": {"delivered": delivered},
         "temperature": {"energy_usage": state.energy_usage},
         "spoilage": {
@@ -180,8 +194,12 @@ def _build_infos(
             "ground_truth_label": state.shipment.ground_truth_label,
         },
         "inventory": {"inventory_level": state.inventory_level},
-        "delivery": {
-            "customer_window_ticks": state.customer_window_ticks,
-            "delivered": delivered,
-        },
     }
+    for i, vehicle in enumerate(state.vehicles):
+        infos[f"delivery_{i}"] = {
+            "delay": vehicle.delay,
+            "sla_violated": vehicle.sla_violated,
+            "emissions": vehicle.emissions,
+            "conflict": vehicle.conflict,
+        }
+    return infos

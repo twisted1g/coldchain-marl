@@ -5,9 +5,9 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 import torch
-import torch.nn as nn
 from gymnasium.spaces import Box, Discrete
 from tensordict import TensorDict
+from torch import nn
 from torchrl.data import Categorical, LazyTensorStorage, TensorDictReplayBuffer
 from torchrl.modules import Actor, QValueActor, ValueOperator
 from torchrl.objectives import DDPGLoss, DQNLoss
@@ -20,7 +20,9 @@ from training.gnn import GNN_EMBED_DIM, SpoilageGNN
 Action = np.ndarray | np.integer | int
 
 
-def _mlp(dims: list[int], *, final_activation: nn.Module | None = None) -> nn.Sequential:
+def _mlp(
+    dims: list[int], *, final_activation: nn.Module | None = None
+) -> nn.Sequential:
     layers: list[nn.Module] = []
     for i in range(len(dims) - 1):
         layers.append(nn.Linear(dims[i], dims[i + 1]))
@@ -29,6 +31,11 @@ def _mlp(dims: list[int], *, final_activation: nn.Module | None = None) -> nn.Se
     if final_activation is not None:
         layers.append(final_activation)
     return nn.Sequential(*layers)
+
+
+def _linear_decay(start: float, end: float, step: int, decay_steps: int) -> float:
+    frac = min(1.0, step / decay_steps)
+    return start + frac * (end - start)
 
 
 def _transition_td(
@@ -132,7 +139,14 @@ class RandomAgent:
 
 
 class _ScaledActor(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden: list[int], low: np.ndarray, high: np.ndarray) -> None:
+    def __init__(
+        self,
+        obs_dim: int,
+        act_dim: int,
+        hidden: list[int],
+        low: np.ndarray,
+        high: np.ndarray,
+    ) -> None:
         super().__init__()
         self.net = _mlp([obs_dim, *hidden, act_dim], final_activation=nn.Tanh())
         self.register_buffer("_low", torch.as_tensor(low, dtype=torch.float32))
@@ -162,15 +176,21 @@ class DDPGAgent:
         hidden = list(cfg["hidden"])
 
         actor_net = _ScaledActor(obs_dim, act_dim, hidden, low, high)
-        self._actor = Actor(module=actor_net, in_keys=["observation"], out_keys=["action"])
-        qval = ValueOperator(module=_QNet(obs_dim, act_dim, hidden), in_keys=["observation", "action"])
+        self._actor = Actor(
+            module=actor_net, in_keys=["observation"], out_keys=["action"]
+        )
+        qval = ValueOperator(
+            module=_QNet(obs_dim, act_dim, hidden), in_keys=["observation", "action"]
+        )
 
         self._loss = DDPGLoss(actor_network=self._actor, value_network=qval)
         self._loss.make_value_estimator(gamma=cfg["gamma"])
         self._updater = SoftUpdate(self._loss, tau=cfg["tau"])
         self._opt = torch.optim.Adam(self._loss.parameters(), lr=cfg["lr"])
 
-        self._rb = TensorDictReplayBuffer(storage=LazyTensorStorage(cfg["buffer_capacity"]))
+        self._rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(cfg["buffer_capacity"])
+        )
         self._batch_size = cfg["batch_size"]
         self._warmup = cfg["warmup"]
         self._sigma = cfg["noise_sigma"] * (high - low)
@@ -178,7 +198,9 @@ class DDPGAgent:
         self._high = high
 
     def act(self, obs: np.ndarray, *, explore: bool) -> np.ndarray:
-        td = TensorDict({"observation": torch.as_tensor(obs, dtype=torch.float32)}, batch_size=[])
+        td = TensorDict(
+            {"observation": torch.as_tensor(obs, dtype=torch.float32)}, batch_size=[]
+        )
         with torch.no_grad():
             action = self._actor(td)["action"].numpy()
         if explore:
@@ -231,18 +253,25 @@ class DDPGAgent:
 class DQNAgent:
     """Discrete-action DQN agent (paper Algorithm 1) with epsilon-greedy exploration."""
 
-    def __init__(self, obs_dim: int, action_space: Discrete, cfg: dict[str, Any]) -> None:
+    def __init__(
+        self, obs_dim: int, action_space: Discrete, cfg: dict[str, Any]
+    ) -> None:
         self._n = int(action_space.n)
         net = _mlp([obs_dim, *list(cfg["hidden"]), self._n])
         self._qnet = QValueActor(
-            module=net, in_keys=["observation"], spec=Categorical(self._n), action_space="categorical"
+            module=net,
+            in_keys=["observation"],
+            spec=Categorical(self._n),
+            action_space="categorical",
         )
         self._loss = DQNLoss(self._qnet, action_space="categorical", double_dqn=True)
         self._loss.make_value_estimator(gamma=cfg["gamma"])
         self._updater = SoftUpdate(self._loss, tau=cfg["tau"])
         self._opt = torch.optim.Adam(self._loss.parameters(), lr=cfg["lr"])
 
-        self._rb = TensorDictReplayBuffer(storage=LazyTensorStorage(cfg["buffer_capacity"]))
+        self._rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(cfg["buffer_capacity"])
+        )
         self._batch_size = cfg["batch_size"]
         self._warmup = cfg["warmup"]
         self._eps_start = cfg["eps_start"]
@@ -251,15 +280,18 @@ class DQNAgent:
         self._steps = 0
 
     def _epsilon(self) -> float:
-        frac = min(1.0, self._steps / self._eps_decay)
-        return self._eps_start + frac * (self._eps_end - self._eps_start)
+        return _linear_decay(
+            self._eps_start, self._eps_end, self._steps, self._eps_decay
+        )
 
     def act(self, obs: np.ndarray, *, explore: bool) -> np.integer:
         if explore:
             self._steps += 1
             if np.random.random() < self._epsilon():
                 return np.int64(np.random.randint(self._n))
-        td = TensorDict({"observation": torch.as_tensor(obs, dtype=torch.float32)}, batch_size=[])
+        td = TensorDict(
+            {"observation": torch.as_tensor(obs, dtype=torch.float32)}, batch_size=[]
+        )
         with torch.no_grad():
             action = self._qnet(td)["action"]
         return np.int64(int(action.argmax()) if action.ndim else int(action))
@@ -305,9 +337,11 @@ class DQNAgent:
 
 
 class SpoilageAgent:
-    """Spoilage agent (paper Algorithm 3): frozen GraphSAGE encoder feeding a DDPG head."""
+    """Spoilage agent (paper Alg 3): frozen GraphSAGE encoder feeding a DDPG head."""
 
-    def __init__(self, obs_dim: int, action_space: Box, cfg: dict[str, Any], encoder_path: Path) -> None:
+    def __init__(
+        self, obs_dim: int, action_space: Box, cfg: dict[str, Any], encoder_path: Path
+    ) -> None:
         self._n_nodes = obs_dim // SPOILAGE_NODE_FEATURES
         self._encoder = SpoilageGNN()
         self._encoder.load_state_dict(torch.load(encoder_path, weights_only=True))
@@ -319,7 +353,9 @@ class SpoilageAgent:
         self._ddpg = DDPGAgent(GNN_EMBED_DIM, action_space, cfg)
 
     def _encode(self, obs: np.ndarray) -> np.ndarray:
-        x = torch.as_tensor(obs, dtype=torch.float32).reshape(self._n_nodes, SPOILAGE_NODE_FEATURES)
+        x = torch.as_tensor(obs, dtype=torch.float32).reshape(
+            self._n_nodes, SPOILAGE_NODE_FEATURES
+        )
         with torch.no_grad():
             z = self._encoder(x, self._edge_index)
         return z.squeeze(0).numpy()
@@ -337,7 +373,12 @@ class SpoilageAgent:
         truncated: bool,
     ) -> None:
         self._ddpg.observe(
-            self._encode(obs), action, reward, self._encode(next_obs), terminated, truncated
+            self._encode(obs),
+            action,
+            reward,
+            self._encode(next_obs),
+            terminated,
+            truncated,
         )
 
     def update(self) -> dict[str, float]:

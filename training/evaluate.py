@@ -13,7 +13,7 @@ def rollout(
     n_episodes: int,
     metric_key: str,
 ) -> tuple[float, float]:
-    """Return (mean episode return, mean per-episode metric) for ``primary``, acting greedily."""
+    """Mean return and per-episode metric for ``primary``, acting greedily."""
     returns: list[float] = []
     metrics: list[float] = []
     for _ in range(n_episodes):
