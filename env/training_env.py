@@ -70,7 +70,10 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._prev: dict[str, float] = {}
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
-        obs, infos = super().reset(seed=self._base_seed + self._episode_index)
+        # Deterministic per-episode seed sequence for reproducible curves; an explicit
+        # caller seed (Gymnasium API) overrides it when given.
+        episode_seed = self._base_seed + self._episode_index if seed is None else seed
+        obs, infos = super().reset(seed=episode_seed)
         self._episode_index += 1
         self._prev = {
             "spoilage_risk": self._state.shipment.spoilage_risk,
