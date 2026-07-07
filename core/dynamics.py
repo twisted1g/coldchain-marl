@@ -8,6 +8,7 @@ import numpy as np
 from core import config
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
 from core.graph_features import node_delay
+from core.intention import IntentionBuffer
 from core.noise import NoiseModel
 from core.observations import all_obs
 from core.spoilage import ArrheniusSpoilage, risk_to_label
@@ -29,10 +30,14 @@ _spoilage_model = ArrheniusSpoilage()
 def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     state.tick += 1
 
+    buffer = IntentionBuffer()
+    buffer.declare_all(actions)
+    conflicts = buffer.detect()
+
     _apply_temperature_action(state, actions.get("temperature"))
     _apply_routing_action(state, actions.get("routing"))
     _apply_inventory_action(state, actions.get("inventory"))
-    _apply_delivery_action(state, actions)
+    _apply_delivery_action(state, actions, conflicts)
     _apply_spoilage_action(state, actions.get("spoilage"))
 
     _advance_thermal_state(state)
@@ -115,20 +120,18 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
     state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
 
 
-def _apply_delivery_action(state: GlobalState, actions: dict[str, Any]) -> None:
-    slot_counts: dict[int, int] = {}
+def _apply_delivery_action(
+    state: GlobalState, actions: dict[str, Any], conflicts: dict[str, bool]
+) -> None:
     for i, vehicle in enumerate(state.vehicles):
         action = actions.get(f"delivery_{i}")
         slot = 0 if action is None else int(action) % config.N_DELIVERY_WINDOWS
         vehicle.chosen_slot = slot
-        slot_counts[slot] = slot_counts.get(slot, 0) + 1
-
-    for vehicle in state.vehicles:
-        deadline = (vehicle.chosen_slot + 1) / config.N_DELIVERY_WINDOWS * state.max_steps
+        deadline = (slot + 1) / config.N_DELIVERY_WINDOWS * state.max_steps
         vehicle.delay = max(0.0, vehicle.route_transit - deadline)
         vehicle.sla_violated = vehicle.route_transit > deadline
         vehicle.emissions = vehicle.route_emissions
-        vehicle.conflict = slot_counts[vehicle.chosen_slot] > 1
+        vehicle.conflict = conflicts.get(f"delivery_{i}", False)
 
 
 def _apply_spoilage_action(state: GlobalState, action: Any) -> None:
