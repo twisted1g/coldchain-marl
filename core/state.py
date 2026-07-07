@@ -43,6 +43,19 @@ class Shipment:
 
 
 @dataclass(slots=True)
+class VehicleState:
+    assigned_node: str
+    route_transit: float
+    route_emissions: float
+    sla_window_ticks: int
+    chosen_slot: int
+    delay: float
+    emissions: float
+    sla_violated: bool
+    conflict: bool
+
+
+@dataclass(slots=True)
 class GlobalState:
     tick: int
     max_steps: int
@@ -67,6 +80,7 @@ class GlobalState:
     route_travel_time: float
     route_emissions: float
     spoilage_prediction: float
+    vehicles: list[VehicleState]
 
 
 def init_state(
@@ -134,7 +148,45 @@ def init_state(
         route_travel_time=0.0,
         route_emissions=0.0,
         spoilage_prediction=0.0,
+        vehicles=_init_vehicles(graph, source, n_steps),
     )
+
+
+def _init_vehicles(graph: nx.DiGraph, source: str, n_steps: int) -> list[VehicleState]:
+    retailers = sink_nodes(graph)
+    vehicles: list[VehicleState] = []
+    for i in range(config.N_VEHICLES):
+        assigned = retailers[i % len(retailers)]
+        transit, emissions = _route_cost(graph, source, assigned)
+        sla_window = min(n_steps, int(np.ceil(transit)) + 1)
+        vehicles.append(
+            VehicleState(
+                assigned_node=assigned,
+                route_transit=transit,
+                route_emissions=emissions,
+                sla_window_ticks=sla_window,
+                chosen_slot=0,
+                delay=0.0,
+                emissions=0.0,
+                sla_violated=False,
+                conflict=False,
+            )
+        )
+    return vehicles
+
+
+def _route_cost(graph: nx.DiGraph, source: str, target: str) -> tuple[float, float]:
+    try:
+        path = nx.shortest_path(graph, source, target, weight="base_transit_time")
+    except nx.NetworkXNoPath:
+        return float(config.EPISODE_LEN_MAX), 0.0
+    transit = 0.0
+    emissions = 0.0
+    for u, v in zip(path[:-1], path[1:]):
+        edge = graph.edges[u, v]
+        transit += float(edge["base_transit_time"])
+        emissions += float(edge["base_emissions"])
+    return transit, emissions
 
 
 def _sample_weather(rng: np.random.Generator) -> Weather:

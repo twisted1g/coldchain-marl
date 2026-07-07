@@ -27,7 +27,7 @@ ACTION_SPACES: dict[str, gym.Space] = {
         shape=(1,),
         dtype=np.float32,
     ),
-    "delivery": Discrete(config.N_DELIVERY_WINDOWS),
+    **{name: Discrete(config.N_DELIVERY_WINDOWS) for name in config.DELIVERY_AGENTS},
 }
 
 

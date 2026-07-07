@@ -32,7 +32,7 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     _apply_temperature_action(state, actions.get("temperature"))
     _apply_routing_action(state, actions.get("routing"))
     _apply_inventory_action(state, actions.get("inventory"))
-    _apply_delivery_action(state, actions.get("delivery"))
+    _apply_delivery_action(state, actions)
     _apply_spoilage_action(state, actions.get("spoilage"))
 
     _advance_thermal_state(state)
@@ -115,12 +115,20 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
     state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
 
 
-def _apply_delivery_action(state: GlobalState, action: Any) -> None:
-    if action is None:
-        return
-    idx = int(action) % config.N_DELIVERY_WINDOWS
-    remaining_window = max(1, state.max_steps - state.tick)
-    state.customer_window_ticks = int(remaining_window * (idx + 1) / config.N_DELIVERY_WINDOWS)
+def _apply_delivery_action(state: GlobalState, actions: dict[str, Any]) -> None:
+    slot_counts: dict[int, int] = {}
+    for i, vehicle in enumerate(state.vehicles):
+        action = actions.get(f"delivery_{i}")
+        slot = 0 if action is None else int(action) % config.N_DELIVERY_WINDOWS
+        vehicle.chosen_slot = slot
+        slot_counts[slot] = slot_counts.get(slot, 0) + 1
+
+    for vehicle in state.vehicles:
+        deadline = (vehicle.chosen_slot + 1) / config.N_DELIVERY_WINDOWS * state.max_steps
+        vehicle.delay = max(0.0, vehicle.route_transit - deadline)
+        vehicle.sla_violated = vehicle.route_transit > deadline
+        vehicle.emissions = vehicle.route_emissions
+        vehicle.conflict = slot_counts[vehicle.chosen_slot] > 1
 
 
 def _apply_spoilage_action(state: GlobalState, action: Any) -> None:
@@ -172,7 +180,7 @@ def _build_infos(
     state: GlobalState,
     delivered: bool,
 ) -> dict[str, dict[str, Any]]:
-    return {
+    infos = {
         "routing": {"delivered": delivered},
         "temperature": {"energy_usage": state.energy_usage},
         "spoilage": {
@@ -180,8 +188,12 @@ def _build_infos(
             "ground_truth_label": state.shipment.ground_truth_label,
         },
         "inventory": {"inventory_level": state.inventory_level},
-        "delivery": {
-            "customer_window_ticks": state.customer_window_ticks,
-            "delivered": delivered,
-        },
     }
+    for i, vehicle in enumerate(state.vehicles):
+        infos[f"delivery_{i}"] = {
+            "delay": vehicle.delay,
+            "sla_violated": vehicle.sla_violated,
+            "emissions": vehicle.emissions,
+            "conflict": vehicle.conflict,
+        }
+    return infos

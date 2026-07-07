@@ -116,25 +116,29 @@ def inventory_obs(state: GlobalState) -> np.ndarray:
     )
 
 
-def delivery_obs(state: GlobalState) -> np.ndarray:
+def delivery_obs(state: GlobalState, i: int) -> np.ndarray:
     s = state.shipment
+    v = state.vehicles[i]
+    horizon = max(1, state.max_steps)
     return np.array(
         [
-            1.0 if state.vehicle_available else 0.0,
-            float(state.customer_window_ticks),
+            1.0,
+            float(v.sla_window_ticks) / horizon,
             s.spoilage_risk,
             _breakdown_alerts(state),
-            _traffic_status(state),
+            v.route_transit / horizon,
         ],
         dtype=np.float32,
     )
 
 
 def all_obs(state: GlobalState) -> dict[str, np.ndarray]:
-    return {
+    obs = {
         "routing": routing_obs(state),
         "temperature": temperature_obs(state),
         "spoilage": spoilage_obs(state),
         "inventory": inventory_obs(state),
-        "delivery": delivery_obs(state),
     }
+    for i, name in enumerate(config.DELIVERY_AGENTS):
+        obs[name] = delivery_obs(state, i)
+    return obs
