@@ -5,9 +5,18 @@ from typing import Any
 
 import numpy as np
 
-from core.config import OBS_FIELDS_BY_AGENT
+from core import config as core_config
+from core.config import DELIVERY_AGENTS, OBS_FIELDS_BY_AGENT
 from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
-from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent, SpoilageAgent
+from training.agents import (
+    Agent,
+    DDPGAgent,
+    DeliveryHandle,
+    DQNAgent,
+    FrozenAgent,
+    MADDPGDelivery,
+    SpoilageAgent,
+)
 
 SEED = 0
 NUM_ITERATIONS = 150
@@ -20,15 +29,17 @@ ALGO = {
     "routing": "DQN",
     "spoilage": "SPOILAGE_GNN",
     "inventory": "DDPG",
+    **{name: "MADDPG" for name in DELIVERY_AGENTS},
 }
 METRIC = {
     "temperature": ("temp_deviation", "min"),
     "routing": ("route_cost", "min"),
     "spoilage": ("fn_rate", "min"),
     "inventory": ("inventory_cost", "min"),
+    **{name: ("sla_violated", "min") for name in DELIVERY_AGENTS},
 }
 
-LEARNERS = ["temperature", "routing", "spoilage", "inventory"]
+LEARNERS = ["temperature", "routing", "spoilage", "inventory", *DELIVERY_AGENTS]
 
 FRUIT = "banana"
 TRAIN_SEED = 1000
@@ -61,7 +72,23 @@ DQN_CFG: dict[str, Any] = {
 
 SPOILAGE_CFG: dict[str, Any] = dict(DDPG_CFG)
 
-ALGO_CFG = {"DDPG": DDPG_CFG, "DQN": DQN_CFG, "SPOILAGE_GNN": SPOILAGE_CFG}
+MADDPG_CFG: dict[str, Any] = {
+    "hidden": [64, 64],
+    "lr": 3e-4,
+    "gamma": 0.99,
+    "tau": 0.005,
+    "batch_size": 256,
+    "buffer_capacity": 100_000,
+    "warmup": 256,
+    "gumbel_tau": 1.0,
+}
+
+ALGO_CFG = {
+    "DDPG": DDPG_CFG,
+    "DQN": DQN_CFG,
+    "SPOILAGE_GNN": SPOILAGE_CFG,
+    "MADDPG": MADDPG_CFG,
+}
 
 ARTIFACTS = Path(__file__).resolve().parent.parent / "artifacts"
 MODULES_DIR = ARTIFACTS / "modules"
@@ -91,11 +118,32 @@ def _build_learner(agent: str, env: ColdChainTrainingEnv) -> Agent:
     raise NotImplementedError(f"Algorithm {algo!r} for agent {agent!r} not implemented yet")
 
 
+def _build_delivery_group(
+    env: ColdChainTrainingEnv, delivery_learners: list[str]
+) -> dict[str, Agent]:
+    obs_dim = int(np.prod(env.observation_space(delivery_learners[0]).shape))
+    group = MADDPGDelivery(
+        n=len(delivery_learners),
+        obs_dim=obs_dim,
+        n_slots=core_config.N_DELIVERY_WINDOWS,
+        cfg=ALGO_CFG["MADDPG"],
+    )
+    return {name: DeliveryHandle(group, i) for i, name in enumerate(delivery_learners)}
+
+
 def build_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Agent]:
-    """All agents for the CTDE loop: learners get their algorithm, rest frozen."""
+    """All agents for the CTDE loop: learners get their algorithm, rest frozen.
+
+    Delivery learners share one MADDPGDelivery group (paper Alg 5 shared critic).
+    """
+    delivery_learners = [a for a in AGENTS if a in learners and a in DELIVERY_AGENTS]
+    delivery_agents = _build_delivery_group(env, delivery_learners) if delivery_learners else {}
+
     agents: dict[str, Agent] = {}
     for agent in AGENTS:
-        if agent in learners:
+        if agent in delivery_agents:
+            agents[agent] = delivery_agents[agent]
+        elif agent in learners:
             agents[agent] = _build_learner(agent, env)
         else:
             agents[agent] = FrozenAgent(env.action_space(agent))

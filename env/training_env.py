@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import Any, Callable
 
-from core.config import FruitKey
+from core.config import DELIVERY_AGENTS, FruitKey
 from core.fruits import get_params
 from core.spoilage import risk_to_label
 from env.pettingzoo_adapter import ColdChainParallelEnv
@@ -30,6 +31,11 @@ INVENTORY_SPOILAGE_WEIGHT = 5.0
 INVENTORY_HOLDING_WEIGHT = 1.0
 INVENTORY_EMISSIONS_WEIGHT = 1.0
 
+DELIVERY_DELAY_WEIGHT = 1.0
+DELIVERY_SLA_WEIGHT = 5.0
+DELIVERY_EMISSIONS_WEIGHT = 0.05
+DELIVERY_CONFLICT_PENALTY = 5.0
+
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
 
@@ -53,6 +59,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             "routing": self._routing_reward,
             "spoilage": self._spoilage_reward,
             "inventory": self._inventory_reward,
+            **{name: partial(self._delivery_reward, i) for i, name in enumerate(DELIVERY_AGENTS)},
         }
         learners = config.get("learners", DEFAULT_LEARNERS)
         self._reward_methods = {a: supported[a] for a in learners}
@@ -137,4 +144,19 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             "inventory_cost": cost,
             "unmet_demand": s.unmet_demand,
             "inventory_level": s.inventory_level,
+        }
+
+    def _delivery_reward(self, i: int) -> tuple[float, dict[str, float]]:
+        v = self._state.vehicles[i]
+        conflict = DELIVERY_CONFLICT_PENALTY if v.conflict else 0.0
+        reward = -(
+            DELIVERY_DELAY_WEIGHT * v.delay
+            + DELIVERY_SLA_WEIGHT * float(v.sla_violated)
+            + DELIVERY_EMISSIONS_WEIGHT * v.emissions
+        ) - conflict
+        return reward, {
+            "delay": v.delay,
+            "sla_violated": float(v.sla_violated),
+            "emissions": v.emissions,
+            "conflict": float(v.conflict),
         }

@@ -8,6 +8,7 @@ import torch
 
 from env.training_env import ColdChainTrainingEnv
 from training.agents import RandomAgent
+from core.config import DELIVERY_AGENTS
 from training.config import (
     ARTIFACTS,
     COMPARE_SEED,
@@ -77,10 +78,18 @@ def main() -> None:
     print(f"\nsaved curve -> {CURVE_CSV}\nsaved modules -> {MODULES_DIR}")
 
 
+def _print_compare(name: str, metric_key: str, direction: str, trained_m: float, random_m: float) -> None:
+    better = (random_m - trained_m) if direction == "min" else (trained_m - random_m)
+    margin = better / abs(random_m) if random_m else float("nan")
+    print(f"  {name}: trained {metric_key}={trained_m:.3f}  random={random_m:.3f}  ({margin:+.0%})")
+
+
 def _compare(learners: list[str]) -> None:
     """Trained-vs-random sanity check per learner on a held-out seed set."""
     print("\ntrained vs random:")
     for a in learners:
+        if a in DELIVERY_AGENTS:
+            continue
         metric_key, direction = METRIC[a]
         solo = [a]
         env = ColdChainTrainingEnv(env_config(COMPARE_SEED, solo))
@@ -92,9 +101,28 @@ def _compare(learners: list[str]) -> None:
         rand[a] = RandomAgent(env.action_space(a))
         _, random_m = rollout(env, rand, a, EVAL_EPISODES, metric_key)
 
-        better = (random_m - trained_m) if direction == "min" else (trained_m - random_m)
-        margin = better / abs(random_m) if random_m else float("nan")
-        print(f"  {a}: trained {metric_key}={trained_m:.3f}  random={random_m:.3f}  ({margin:+.0%})")
+        _print_compare(a, metric_key, direction, trained_m, random_m)
+
+    delivery = [a for a in learners if a in DELIVERY_AGENTS]
+    if delivery:
+        _compare_delivery(delivery)
+
+
+def _compare_delivery(delivery: list[str]) -> None:
+    """Delivery vehicles share one MADDPG group; compare on mean sla_violated across the block."""
+    metric_key, direction = METRIC[delivery[0]]
+    env = ColdChainTrainingEnv(env_config(COMPARE_SEED, delivery))
+
+    trained = build_agents(env, delivery)
+    trained[delivery[0]].load(module_dir(delivery[0]))
+    trained_m = float(np.mean([rollout(env, trained, a, EVAL_EPISODES, metric_key)[1] for a in delivery]))
+
+    rand = build_agents(env, delivery)
+    for a in delivery:
+        rand[a] = RandomAgent(env.action_space(a))
+    random_m = float(np.mean([rollout(env, rand, a, EVAL_EPISODES, metric_key)[1] for a in delivery]))
+
+    _print_compare("delivery", metric_key, direction, trained_m, random_m)
 
 
 if __name__ == "__main__":
