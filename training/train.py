@@ -82,12 +82,13 @@ def _compare(learners: list[str]) -> None:
     print("\ntrained vs random:")
     for a in learners:
         metric_key, direction = METRIC[a]
-        env = ColdChainTrainingEnv(env_config(COMPARE_SEED, learners))
-        trained = build_agents(env, learners)
+        solo = [a]
+        env = ColdChainTrainingEnv(env_config(COMPARE_SEED, solo))
+        trained = build_agents(env, solo)
         trained[a].load(module_dir(a))
         _, trained_m = rollout(env, trained, a, EVAL_EPISODES, metric_key)
 
-        rand = build_agents(env, learners)
+        rand = build_agents(env, solo)
         rand[a] = RandomAgent(env.action_space(a))
         _, random_m = rollout(env, rand, a, EVAL_EPISODES, metric_key)
 

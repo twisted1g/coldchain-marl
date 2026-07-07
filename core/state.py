@@ -19,6 +19,13 @@ _AMBIENT_BASE_TEMP_C: dict[Weather, float] = {
     Weather.STORMY: 10.0,
 }
 
+_AMBIENT_HUMIDITY_BY_WEATHER: dict[Weather, float] = {
+    Weather.SUNNY: 0.45,
+    Weather.CLOUDY: 0.65,
+    Weather.RAINY: 0.85,
+    Weather.STORMY: 0.92,
+}
+
 
 @dataclass(slots=True)
 class Shipment:
@@ -45,7 +52,11 @@ class GlobalState:
     active_disruptions: list[Disruption]
     ambient_weather: Weather
     ambient_temp_c: float
+    ambient_humidity: float
     inventory_level: float
+    inventory_rng: np.random.Generator
+    unmet_demand: float
+    inventory_order: float
     demand_forecast: float
     predicted_demand: float
     vehicle_available: bool
@@ -55,6 +66,7 @@ class GlobalState:
     fault_signals: int
     route_travel_time: float
     route_emissions: float
+    spoilage_prediction: float
 
 
 def init_state(
@@ -62,7 +74,8 @@ def init_state(
     max_steps: int | None = None,
     fruit: FruitKey | None = None,
 ) -> GlobalState:
-    rng = np.random.default_rng(config.DEFAULT_SEED if seed is None else seed)
+    base_seed = config.DEFAULT_SEED if seed is None else seed
+    rng = np.random.default_rng(base_seed)
     n_steps = (
         max_steps
         if max_steps is not None
@@ -94,6 +107,8 @@ def init_state(
 
     weather = _sample_weather(rng)
     ambient_temp = _sample_ambient_temp(rng, weather)
+    ambient_humidity = _sample_ambient_humidity(rng, weather)
+    shipment.sensor_humidity = ambient_humidity
 
     return GlobalState(
         tick=0,
@@ -104,8 +119,12 @@ def init_state(
         active_disruptions=[],
         ambient_weather=weather,
         ambient_temp_c=ambient_temp,
-        inventory_level=1.0,
-        demand_forecast=1.0,
+        ambient_humidity=ambient_humidity,
+        inventory_level=config.INVENTORY_INIT_LEVEL,
+        inventory_rng=np.random.default_rng(base_seed + config.INVENTORY_RNG_OFFSET),
+        unmet_demand=0.0,
+        inventory_order=0.0,
+        demand_forecast=config.INVENTORY_DEMAND_MEAN,
         predicted_demand=1.0,
         vehicle_available=True,
         customer_window_ticks=n_steps,
@@ -114,6 +133,7 @@ def init_state(
         fault_signals=0,
         route_travel_time=0.0,
         route_emissions=0.0,
+        spoilage_prediction=0.0,
     )
 
 
@@ -127,3 +147,8 @@ def _sample_weather(rng: np.random.Generator) -> Weather:
 
 def _sample_ambient_temp(rng: np.random.Generator, weather: Weather) -> float:
     return _AMBIENT_BASE_TEMP_C[weather] + float(rng.normal(0.0, 3.0))
+
+
+def _sample_ambient_humidity(rng: np.random.Generator, weather: Weather) -> float:
+    base = _AMBIENT_HUMIDITY_BY_WEATHER[weather]
+    return float(np.clip(base + rng.normal(0.0, 0.05), 0.0, 1.0))

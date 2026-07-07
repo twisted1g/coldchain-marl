@@ -12,11 +12,7 @@ def collect_and_learn(
     explore: bool = True,
     learn: bool = True,
 ) -> None:
-    """Run the CTDE loop: all agents act each step, store transitions, then update.
-
-    Agents act on local observations; each learns with its own algorithm. Frozen
-    agents no-op on observe/update, so this drives any learner subset unchanged.
-    """
+    """CTDE loop: all agents act each step, store transitions, then update."""
     for _ in range(n_episodes):
         obs, _ = env.reset()
         done = False

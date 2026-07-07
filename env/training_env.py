@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from core.config import FruitKey
 from core.fruits import get_params
+from core.spoilage import risk_to_label
 from env.pettingzoo_adapter import ColdChainParallelEnv
 
 DEFAULT_FRUIT = FruitKey.STRAWBERRY
@@ -11,19 +12,23 @@ DEFAULT_MAX_STEPS = 20
 DEFAULT_BASE_SEED = 0
 DEFAULT_LEARNERS = ("temperature",)
 
-# Fixed reward weights. w2 is tuned so the interior optimum of the energy/spoilage
-# trade-off lands on the fruit's ideal midpoint: the energy gradient is a constant
-# -0.1*w1 while sensor < ambient, balanced against the Arrhenius spoilage gradient.
-# PHASE 4: context-aware Pareto weights.
 ENERGY_WEIGHT = 1.0
 SPOILAGE_WEIGHT = 25.0
+DEVIATION_WEIGHT = 2.0
 STEP_PENALTY = 0.01
 
-# Routing (paper Algorithm 1): penalize travel time, emissions, spoilage risk
-# accrued on the route. Fixed weights; PHASE 4: context-aware Pareto weights.
 ROUTE_TIME_WEIGHT = 1.0
-ROUTE_EMISSIONS_WEIGHT = 0.5
+ROUTE_EMISSIONS_WEIGHT = 0.1
 ROUTE_RISK_WEIGHT = 10.0
+DELIVERY_BONUS = 100.0
+
+SPOILAGE_PRED_WEIGHT = 3.0
+SPOILAGE_FN_WEIGHT = 5.0
+SPOILAGE_INSPECTION_WEIGHT = 0.2
+
+INVENTORY_SPOILAGE_WEIGHT = 5.0
+INVENTORY_HOLDING_WEIGHT = 1.0
+INVENTORY_EMISSIONS_WEIGHT = 1.0
 
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
@@ -31,10 +36,8 @@ RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 class ColdChainTrainingEnv(ColdChainParallelEnv):
     """Cold-chain env that shapes rewards for the trainable ("learner") agents.
 
-    Each learner's reward is computed by its own ``_<agent>_reward`` method; the
-    frozen agents keep the core's zero reward. The fruit is fixed so the ideal
-    band is stationary, and episodes follow a deterministic seed sequence for
-    reproducible curves. To train a new agent: add its reward method, register it
+    Each learner's reward comes from its own ``_<agent>_reward`` method; frozen agents
+    keep the core's zero reward. To add a learner: define its reward method, register it
     in ``self._reward_methods``, and list it in training.config.LEARNERS.
     """
 
@@ -48,6 +51,8 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         supported: dict[str, RewardMethod] = {
             "temperature": self._temperature_reward,
             "routing": self._routing_reward,
+            "spoilage": self._spoilage_reward,
+            "inventory": self._inventory_reward,
         }
         learners = config.get("learners", DEFAULT_LEARNERS)
         self._reward_methods = {a: supported[a] for a in learners}
@@ -55,7 +60,8 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._prev: dict[str, float] = {}
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
-        obs, infos = super().reset(seed=self._base_seed + self._episode_index)
+        episode_seed = self._base_seed + self._episode_index if seed is None else seed
+        obs, infos = super().reset(seed=episode_seed)
         self._episode_index += 1
         self._prev = {
             "spoilage_risk": self._state.shipment.spoilage_risk,
@@ -79,11 +85,16 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         s = self._state.shipment
         energy = float(self._state.energy_usage)
         spoilage_delta = max(0.0, s.spoilage_risk - self._prev["spoilage_risk"])
-        reward = -(ENERGY_WEIGHT * energy + SPOILAGE_WEIGHT * spoilage_delta) - STEP_PENALTY
 
         params = get_params(s.fruit_type)
         ideal = (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
         deviation = abs(s.sensor_temperature_c - ideal)
+
+        reward = -(
+            ENERGY_WEIGHT * energy
+            + SPOILAGE_WEIGHT * spoilage_delta
+            + DEVIATION_WEIGHT * deviation
+        ) - STEP_PENALTY
         return reward, {"temp_deviation": deviation}
 
     def _routing_reward(self) -> tuple[float, dict[str, float]]:
@@ -95,4 +106,35 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             + ROUTE_EMISSIONS_WEIGHT * dt_emissions
             + ROUTE_RISK_WEIGHT * risk
         )
-        return -cost, {"route_cost": cost}
+        s = self._state.shipment
+        delivered = s.current_node == s.target_node
+        reward = -cost + (DELIVERY_BONUS if delivered else 0.0)
+        return reward, {"route_cost": cost, "delivered": float(delivered)}
+
+    def _spoilage_reward(self) -> tuple[float, dict[str, float]]:
+        pred = self._state.spoilage_prediction
+        label = float(risk_to_label(self._state.shipment.spoilage_risk))
+        pred_error = (pred - label) ** 2
+        false_negative = 1.0 if (label == 1.0 and pred < 0.5) else 0.0
+        reward = -(
+            SPOILAGE_PRED_WEIGHT * pred_error
+            + SPOILAGE_FN_WEIGHT * false_negative
+            + SPOILAGE_INSPECTION_WEIGHT * pred
+        )
+        return reward, {"fn_rate": false_negative, "y_pred": pred, "spoilage_label": label}
+
+    def _inventory_reward(self) -> tuple[float, dict[str, float]]:
+        s = self._state
+        spoilage_loss = s.inventory_level * s.shipment.spoilage_risk
+        holding = s.inventory_level
+        emissions = s.inventory_order
+        cost = (
+            INVENTORY_SPOILAGE_WEIGHT * spoilage_loss
+            + INVENTORY_HOLDING_WEIGHT * holding
+            + INVENTORY_EMISSIONS_WEIGHT * emissions
+        )
+        return -cost, {
+            "inventory_cost": cost,
+            "unmet_demand": s.unmet_demand,
+            "inventory_level": s.inventory_level,
+        }

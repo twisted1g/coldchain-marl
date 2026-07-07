@@ -15,6 +15,8 @@ class FruitParams:
     arrhenius_activation_energy_j_per_mol: float
     base_shelf_life_ticks: int
     ethylene_sensitive: bool
+    optimal_humidity_low: float
+    optimal_humidity_high: float
 
 
 FRUIT_REGISTRY: Final[dict[FruitKey, FruitParams]] = {
@@ -26,6 +28,8 @@ FRUIT_REGISTRY: Final[dict[FruitKey, FruitParams]] = {
         arrhenius_activation_energy_j_per_mol=70_000.0,
         base_shelf_life_ticks=14,
         ethylene_sensitive=False,
+        optimal_humidity_low=0.90,
+        optimal_humidity_high=0.95,
     ),
     FruitKey.BANANA: FruitParams(
         optimal_temp_low_c=13.0,
@@ -35,6 +39,8 @@ FRUIT_REGISTRY: Final[dict[FruitKey, FruitParams]] = {
         arrhenius_activation_energy_j_per_mol=65_000.0,
         base_shelf_life_ticks=18,
         ethylene_sensitive=True,
+        optimal_humidity_low=0.90,
+        optimal_humidity_high=0.95,
     ),
     FruitKey.ORANGE: FruitParams(
         optimal_temp_low_c=4.0,
@@ -44,6 +50,8 @@ FRUIT_REGISTRY: Final[dict[FruitKey, FruitParams]] = {
         arrhenius_activation_energy_j_per_mol=60_000.0,
         base_shelf_life_ticks=28,
         ethylene_sensitive=False,
+        optimal_humidity_low=0.85,
+        optimal_humidity_high=0.90,
     ),
 }
 

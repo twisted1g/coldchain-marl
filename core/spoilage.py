@@ -3,7 +3,14 @@ from __future__ import annotations
 import math
 from typing import Protocol
 
-from core.config import KELVIN_OFFSET, R_GAS, RISK_LABEL_THRESHOLD, FruitKey
+from core.config import (
+    DELAY_RISK_FACTOR,
+    HUMIDITY_SEVERITY_SCALE,
+    KELVIN_OFFSET,
+    R_GAS,
+    RISK_LABEL_THRESHOLD,
+    FruitKey,
+)
 from core.fruits import FruitParams, get_params
 
 
@@ -12,6 +19,8 @@ class SpoilageModel(Protocol):
         self,
         fruit: FruitKey,
         temperature_c: float,
+        humidity: float,
+        delay: float = 0.0,
         dt_ticks: float = 1.0,
     ) -> float: ...
 
@@ -21,6 +30,8 @@ class ArrheniusSpoilage:
         self,
         fruit: FruitKey,
         temperature_c: float,
+        humidity: float,
+        delay: float = 0.0,
         dt_ticks: float = 1.0,
     ) -> float:
         params = get_params(fruit)
@@ -30,7 +41,19 @@ class ArrheniusSpoilage:
         )
         delta = per_tick_at_optimal * rate_ratio * dt_ticks
         delta += self._chilling_penalty(params, temperature_c) * dt_ticks
+        delta += self._humidity_penalty(params, humidity) * dt_ticks
+        delta += per_tick_at_optimal * DELAY_RISK_FACTOR * delay * dt_ticks
         return delta
+
+    @staticmethod
+    def _humidity_penalty(params: FruitParams, humidity: float) -> float:
+        low, high = params.optimal_humidity_low, params.optimal_humidity_high
+        if low <= humidity <= high:
+            return 0.0
+        distance = (low - humidity) if humidity < low else (humidity - high)
+        severity = distance / HUMIDITY_SEVERITY_SCALE
+        per_tick_at_optimal = RISK_LABEL_THRESHOLD / params.base_shelf_life_ticks
+        return per_tick_at_optimal * severity
 
     @staticmethod
     def _arrhenius_rate(params: FruitParams, temperature_c: float) -> float:
