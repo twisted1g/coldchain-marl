@@ -342,17 +342,24 @@ class MADDPGDelivery:
         self._warmup = cfg["warmup"]
         self._gamma = cfg["gamma"]
         self._tau = cfg["tau"]
-        self._gumbel_tau = cfg["gumbel_tau"]
+        self._gumbel_start = cfg["gumbel_tau_start"]
+        self._gumbel_end = cfg["gumbel_tau_end"]
+        self._gumbel_decay = cfg["gumbel_tau_decay_steps"]
+        self._steps = 0
 
         self._pending: dict[int, tuple[np.ndarray, int, float, np.ndarray, bool]] = {}
         self._need_update = False
+
+    def _gumbel_tau(self) -> float:
+        frac = min(1.0, self._steps / self._gumbel_decay)
+        return self._gumbel_start + frac * (self._gumbel_end - self._gumbel_start)
 
     def act(self, i: int, obs: np.ndarray, *, explore: bool) -> np.integer:
         td_obs = torch.as_tensor(obs, dtype=torch.float32)
         with torch.no_grad():
             logits = self._actors[i](td_obs)
             if explore:
-                sample = F.gumbel_softmax(logits, tau=self._gumbel_tau, hard=True)
+                sample = F.gumbel_softmax(logits, tau=self._gumbel_tau(), hard=True)
                 slot = int(sample.argmax())
             else:
                 slot = int(logits.argmax())
@@ -428,10 +435,12 @@ class MADDPGDelivery:
         critic_loss.backward()
         self._critic_opt.step()
 
+        self._steps += 1
+        gumbel_tau = self._gumbel_tau()
         actor_loss = torch.zeros(())
         for i in range(self._n):
             logits_i = self._actors[i](obs[:, i, :])
-            gs_i = F.gumbel_softmax(logits_i, tau=self._gumbel_tau, hard=True)
+            gs_i = F.gumbel_softmax(logits_i, tau=gumbel_tau, hard=True)
             parts = [gs_i if j == i else act_oh[:, j, :] for j in range(self._n)]
             joint_act_i = torch.cat(parts, dim=-1)
             actor_loss = actor_loss - self._critic(joint_obs, joint_act_i).mean()

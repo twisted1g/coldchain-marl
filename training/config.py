@@ -36,7 +36,7 @@ METRIC = {
     "routing": ("route_cost", "min"),
     "spoilage": ("fn_rate", "min"),
     "inventory": ("inventory_cost", "min"),
-    **{name: ("sla_violated", "min") for name in DELIVERY_AGENTS},
+    **{name: ("delivery_cost", "min") for name in DELIVERY_AGENTS},
 }
 
 LEARNERS = ["temperature", "routing", "spoilage", "inventory", *DELIVERY_AGENTS]
@@ -80,7 +80,9 @@ MADDPG_CFG: dict[str, Any] = {
     "batch_size": 256,
     "buffer_capacity": 100_000,
     "warmup": 256,
-    "gumbel_tau": 1.0,
+    "gumbel_tau_start": 1.0,
+    "gumbel_tau_end": 0.3,
+    "gumbel_tau_decay_steps": 30_000,
 }
 
 ALGO_CFG = {

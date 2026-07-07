@@ -149,12 +149,14 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
     def _delivery_reward(self, i: int) -> tuple[float, dict[str, float]]:
         v = self._state.vehicles[i]
         conflict = DELIVERY_CONFLICT_PENALTY if v.conflict else 0.0
-        reward = -(
+        cost = (
             DELIVERY_DELAY_WEIGHT * v.delay
             + DELIVERY_SLA_WEIGHT * float(v.sla_violated)
             + DELIVERY_EMISSIONS_WEIGHT * v.emissions
-        ) - conflict
-        return reward, {
+            + conflict
+        )
+        return -cost, {
+            "delivery_cost": cost,
             "delay": v.delay,
             "sla_violated": float(v.sla_violated),
             "emissions": v.emissions,

@@ -130,6 +130,7 @@ INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (
 )
 
 DELIVERY_OBS_FIELDS: Final[tuple[str, ...]] = (
+    "vehicle_id",
     "vehicle_availability",
     "customer_window",
     "spoilage_risk",

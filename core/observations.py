@@ -122,6 +122,7 @@ def delivery_obs(state: GlobalState, i: int) -> np.ndarray:
     horizon = max(1, state.max_steps)
     return np.array(
         [
+            i / max(1, config.N_VEHICLES - 1),
             1.0,
             float(v.sla_window_ticks) / horizon,
             s.spoilage_risk,
