@@ -40,12 +40,12 @@ DELIVERY_CONFLICT_PENALTY = 5.0
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
 
-def _dynamic_pareto(costs: list[float]) -> float:
-    """Paper Alg 1-5 context-aware weights w_j = c_j/sum(c): returns sum(w_j*c_j)."""
-    total = sum(costs)
+def _dynamic_pareto(costs: list[tuple[float, float]]) -> float:
+    """Paper Alg 1-5 context-aware weights w_j = a_j*c_j/sum_k(a_k*c_k): returns sum(w_j*c_j)."""
+    total = sum(a * c for a, c in costs)
     if total <= 0.0:
         return 0.0
-    return sum(c * c for c in costs) / total
+    return sum(a * c * c for a, c in costs) / total
 
 
 class ColdChainTrainingEnv(ColdChainParallelEnv):
@@ -110,7 +110,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         deviation = abs(s.sensor_temperature_c - ideal)
 
         weighted = _dynamic_pareto(
-            [ENERGY_WEIGHT * energy, SPOILAGE_WEIGHT * spoilage_delta]
+            [(ENERGY_WEIGHT, energy), (SPOILAGE_WEIGHT, spoilage_delta)]
         )
         reward = -(weighted + DEVIATION_WEIGHT * deviation) - STEP_PENALTY
         return reward, {"temp_deviation": deviation}
@@ -121,9 +121,9 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         risk = self._state.shipment.spoilage_risk
         cost = _dynamic_pareto(
             [
-                ROUTE_TIME_WEIGHT * dt_time,
-                ROUTE_EMISSIONS_WEIGHT * dt_emissions,
-                ROUTE_RISK_WEIGHT * risk,
+                (ROUTE_TIME_WEIGHT, dt_time),
+                (ROUTE_EMISSIONS_WEIGHT, dt_emissions),
+                (ROUTE_RISK_WEIGHT, risk),
             ]
         )
         s = self._state.shipment
@@ -138,9 +138,9 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         false_negative = 1.0 if (label == 1.0 and pred < 0.5) else 0.0
         reward = -_dynamic_pareto(
             [
-                SPOILAGE_PRED_WEIGHT * pred_error,
-                SPOILAGE_FN_WEIGHT * false_negative,
-                SPOILAGE_INSPECTION_WEIGHT * pred,
+                (SPOILAGE_PRED_WEIGHT, pred_error),
+                (SPOILAGE_FN_WEIGHT, false_negative),
+                (SPOILAGE_INSPECTION_WEIGHT, pred),
             ]
         )
         return reward, {
@@ -156,9 +156,9 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         emissions = s.inventory_order
         cost = _dynamic_pareto(
             [
-                INVENTORY_SPOILAGE_WEIGHT * spoilage_loss,
-                INVENTORY_HOLDING_WEIGHT * holding,
-                INVENTORY_EMISSIONS_WEIGHT * emissions,
+                (INVENTORY_SPOILAGE_WEIGHT, spoilage_loss),
+                (INVENTORY_HOLDING_WEIGHT, holding),
+                (INVENTORY_EMISSIONS_WEIGHT, emissions),
             ]
         )
         return -cost, {
@@ -172,9 +172,9 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         conflict = DELIVERY_CONFLICT_PENALTY if v.conflict else 0.0
         weighted = _dynamic_pareto(
             [
-                DELIVERY_DELAY_WEIGHT * v.delay,
-                DELIVERY_SLA_WEIGHT * float(v.sla_violated),
-                DELIVERY_EMISSIONS_WEIGHT * v.emissions,
+                (DELIVERY_DELAY_WEIGHT, v.delay),
+                (DELIVERY_SLA_WEIGHT, float(v.sla_violated)),
+                (DELIVERY_EMISSIONS_WEIGHT, v.emissions),
             ]
         )
         cost = weighted + conflict
