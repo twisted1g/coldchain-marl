@@ -124,7 +124,6 @@ INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (
     "inventory_level",
     "demand_forecast",
     "shelf_life",
-    "predicted_demand",
     "zone_energy_usage",
 )
 

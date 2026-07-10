@@ -113,7 +113,7 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
         0.0,
         float(
             state.inventory_rng.normal(
-                state.demand_forecast, config.INVENTORY_DEMAND_SIGMA
+                state.demand_mean, config.INVENTORY_DEMAND_SIGMA
             )
         ),
     )

@@ -69,8 +69,8 @@ class GlobalState:
     inventory_rng: np.random.Generator
     unmet_demand: float
     inventory_order: float
+    demand_mean: float
     demand_forecast: float
-    predicted_demand: float
     energy_usage: float
     fault_signals: int
     route_travel_time: float
@@ -134,8 +134,8 @@ def init_state(
         inventory_rng=np.random.default_rng(base_seed + config.INVENTORY_RNG_OFFSET),
         unmet_demand=0.0,
         inventory_order=0.0,
+        demand_mean=config.INVENTORY_DEMAND_MEAN,
         demand_forecast=config.INVENTORY_DEMAND_MEAN,
-        predicted_demand=1.0,
         energy_usage=0.0,
         fault_signals=0,
         route_travel_time=0.0,

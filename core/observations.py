@@ -111,7 +111,6 @@ def inventory_obs(state: GlobalState) -> np.ndarray:
             state.inventory_level,
             state.demand_forecast,
             float(shelf_remaining),
-            state.predicted_demand,
             state.energy_usage,
         ],
         dtype=np.float32,
