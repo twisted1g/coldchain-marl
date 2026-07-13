@@ -141,11 +141,6 @@ INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (
     "demand_forecast",
     "shelf_life",
     "zone_energy_usage",
-    "day_of_year_sin",
-    "day_of_year_cos",
-    "weekday_sin",
-    "weekday_cos",
-    "weather",
 )
 
 DELIVERY_OBS_FIELDS: Final[tuple[str, ...]] = (
