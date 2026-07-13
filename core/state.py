@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import networkx as nx
 import numpy as np
 
-from core import config
+from core import config, demand
 from core.config import FruitKey, Weather
 from core.fruits import get_params
 from core.graph import build_supply_chain, sink_nodes, source_nodes
@@ -70,6 +70,10 @@ class GlobalState:
     unmet_demand: float
     inventory_order: float
     demand_mean: float
+    day_of_year: int
+    weekday: int
+    event_days_left: int
+    event_multiplier: float
     demand_forecast: float
     energy_usage: float
     fault_signals: int
@@ -120,6 +124,10 @@ def init_state(
     ambient_humidity = _sample_ambient_humidity(rng, weather)
     shipment.sensor_humidity = ambient_humidity
 
+    inventory_rng = np.random.default_rng(base_seed + config.INVENTORY_RNG_OFFSET)
+    day_of_year = int(inventory_rng.integers(0, config.DAYS_PER_YEAR))
+    weekday = int(inventory_rng.integers(0, config.DAYS_PER_WEEK))
+
     return GlobalState(
         tick=0,
         max_steps=n_steps,
@@ -131,10 +139,14 @@ def init_state(
         ambient_temp_c=ambient_temp,
         ambient_humidity=ambient_humidity,
         inventory_level=config.INVENTORY_INIT_LEVEL,
-        inventory_rng=np.random.default_rng(base_seed + config.INVENTORY_RNG_OFFSET),
+        inventory_rng=inventory_rng,
         unmet_demand=0.0,
         inventory_order=0.0,
-        demand_mean=config.INVENTORY_DEMAND_MEAN,
+        demand_mean=demand.demand_mean(day_of_year, weekday, weather, 1.0),
+        day_of_year=day_of_year,
+        weekday=weekday,
+        event_days_left=0,
+        event_multiplier=1.0,
         demand_forecast=config.INVENTORY_DEMAND_MEAN,
         energy_usage=0.0,
         fault_signals=0,

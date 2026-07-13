@@ -37,9 +37,18 @@ INVENTORY_ACTION_HIGH: Final[float] = 1.0
 
 INVENTORY_INIT_LEVEL: Final[float] = 1.0
 INVENTORY_DEMAND_MEAN: Final[float] = 0.15
-INVENTORY_DEMAND_SIGMA: Final[float] = 0.05
 INVENTORY_RESTOCK_SCALE: Final[float] = 0.25
 INVENTORY_RNG_OFFSET: Final[int] = 90_001
+
+DAYS_PER_YEAR: Final[int] = 365
+DAYS_PER_WEEK: Final[int] = 7
+
+DEMAND_SEASON_AMP: Final[float] = 0.3
+DEMAND_WEEKEND_MULT: Final[float] = 1.2
+DEMAND_EVENT_PROB: Final[float] = 0.02
+DEMAND_EVENT_DURATION_RANGE: Final[tuple[int, int]] = (1, 3)
+DEMAND_EVENT_MULT_RANGE: Final[tuple[float, float]] = (1.5, 2.5)
+DEMAND_NOISE_SIGMA: Final[float] = 0.1
 
 
 class FruitKey(str, Enum):
@@ -88,6 +97,13 @@ WEATHER_PRIORS: Final[dict[Weather, float]] = {
     Weather.CLOUDY: 0.25,
     Weather.RAINY: 0.15,
     Weather.STORMY: 0.05,
+}
+
+DEMAND_WEATHER_MULT: Final[dict[Weather, float]] = {
+    Weather.SUNNY: 1.3,
+    Weather.CLOUDY: 1.0,
+    Weather.RAINY: 0.85,
+    Weather.STORMY: 0.6,
 }
 
 

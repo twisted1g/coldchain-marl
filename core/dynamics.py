@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from core import config
+from core import config, demand
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
 from core.graph_features import node_delay
 from core.intention import IntentionBuffer
@@ -29,6 +29,7 @@ _spoilage_model = ArrheniusSpoilage()
 
 def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     state.tick += 1
+    _advance_calendar(state)
 
     buffer = IntentionBuffer()
     buffer.declare_all(actions)
@@ -109,16 +110,15 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
         )
     )
     level = state.inventory_level + order * config.INVENTORY_RESTOCK_SCALE
-    demand = max(
-        0.0,
-        float(
-            state.inventory_rng.normal(
-                state.demand_mean, config.INVENTORY_DEMAND_SIGMA
-            )
-        ),
+    sampled = demand.sample_demand(
+        state.inventory_rng,
+        state.day_of_year,
+        state.weekday,
+        state.ambient_weather,
+        state.event_multiplier,
     )
-    sold = min(level, demand)
-    state.unmet_demand = demand - sold
+    sold = min(level, sampled)
+    state.unmet_demand = sampled - sold
     state.inventory_order = order
     state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
 
@@ -167,6 +167,17 @@ def _advance_spoilage(state: GlobalState) -> None:
     s.spoilage_risk = float(np.clip(s.spoilage_risk + delta, 0.0, 1.0))
     s.freshness_score = float(max(0.0, 1.0 - s.spoilage_risk))
     s.age_ticks += 1
+
+
+def _advance_calendar(state: GlobalState) -> None:
+    state.day_of_year = (state.day_of_year + 1) % config.DAYS_PER_YEAR
+    state.weekday = (state.weekday + 1) % config.DAYS_PER_WEEK
+    state.event_days_left, state.event_multiplier = demand.advance_event(
+        state.inventory_rng, state.event_days_left, state.event_multiplier
+    )
+    state.demand_mean = demand.demand_mean(
+        state.day_of_year, state.weekday, state.ambient_weather, state.event_multiplier
+    )
 
 
 def _maybe_sample_disruption(state: GlobalState) -> None:
