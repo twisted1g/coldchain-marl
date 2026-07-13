@@ -43,7 +43,7 @@ def _evaluate(model: DemandForecaster, loader: DataLoader) -> dict[str, float]:
         pred = model(x)
         abs_err += float((pred - y).abs().sum())
         sq_err += float(((pred - y) ** 2).sum())
-        last_abs_err += float((x[:, -1, 0] - y).abs().sum())
+        last_abs_err += float((x[:, -2, 0] - y).abs().sum())
         n += len(y)
     return {"mae": abs_err / n, "mse": sq_err / n, "last_value_mae": last_abs_err / n}
 
