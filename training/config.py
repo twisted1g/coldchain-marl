@@ -83,6 +83,7 @@ ALGO_CFG = {
 ARTIFACTS = Path(__file__).resolve().parent.parent / "artifacts"
 MODULES_DIR = ARTIFACTS / "modules"
 SPOILAGE_ENCODER_PATH = MODULES_DIR / "spoilage_gnn" / "encoder.pt"
+FORECASTER_PATH = MODULES_DIR / "forecaster" / "forecaster.pt"
 CURVE_CSV = ARTIFACTS / "reward_curve.csv"
 
 
