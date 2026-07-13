@@ -49,6 +49,7 @@ DEMAND_EVENT_PROB: Final[float] = 0.02
 DEMAND_EVENT_DURATION_RANGE: Final[tuple[int, int]] = (1, 3)
 DEMAND_EVENT_MULT_RANGE: Final[tuple[float, float]] = (1.5, 2.5)
 DEMAND_NOISE_SIGMA: Final[float] = 0.1
+DEMAND_HISTORY_DAYS: Final[int] = 28
 
 
 class FruitKey(str, Enum):

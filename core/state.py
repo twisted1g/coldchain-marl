@@ -74,6 +74,8 @@ class GlobalState:
     weekday: int
     event_days_left: int
     event_multiplier: float
+    demand_today: float
+    history: demand.DemandSeries
     demand_forecast: float
     energy_usage: float
     fault_signals: int
@@ -128,6 +130,29 @@ def init_state(
     day_of_year = int(inventory_rng.integers(0, config.DAYS_PER_YEAR))
     weekday = int(inventory_rng.integers(0, config.DAYS_PER_WEEK))
 
+    history, event_days_left, event_multiplier = demand.backfill_history(
+        inventory_rng,
+        (day_of_year - 1) % config.DAYS_PER_YEAR,
+        (weekday - 1) % config.DAYS_PER_WEEK,
+        config.DEMAND_HISTORY_DAYS,
+    )
+    event_days_left, event_multiplier = demand.advance_event(
+        inventory_rng, event_days_left, event_multiplier
+    )
+    mean_today = demand.demand_mean(day_of_year, weekday, weather, event_multiplier)
+    demand_today = demand.sample_demand(
+        inventory_rng, day_of_year, weekday, weather, event_multiplier
+    )
+    demand.push_history(
+        history,
+        day_of_year,
+        weekday,
+        weather,
+        event_multiplier,
+        mean_today,
+        demand_today,
+    )
+
     return GlobalState(
         tick=0,
         max_steps=n_steps,
@@ -142,11 +167,13 @@ def init_state(
         inventory_rng=inventory_rng,
         unmet_demand=0.0,
         inventory_order=0.0,
-        demand_mean=demand.demand_mean(day_of_year, weekday, weather, 1.0),
+        demand_mean=mean_today,
         day_of_year=day_of_year,
         weekday=weekday,
-        event_days_left=0,
-        event_multiplier=1.0,
+        event_days_left=event_days_left,
+        event_multiplier=event_multiplier,
+        demand_today=demand_today,
+        history=history,
         demand_forecast=config.INVENTORY_DEMAND_MEAN,
         energy_usage=0.0,
         fault_signals=0,

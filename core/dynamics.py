@@ -110,15 +110,8 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
         )
     )
     level = state.inventory_level + order * config.INVENTORY_RESTOCK_SCALE
-    sampled = demand.sample_demand(
-        state.inventory_rng,
-        state.day_of_year,
-        state.weekday,
-        state.ambient_weather,
-        state.event_multiplier,
-    )
-    sold = min(level, sampled)
-    state.unmet_demand = sampled - sold
+    sold = min(level, state.demand_today)
+    state.unmet_demand = state.demand_today - sold
     state.inventory_order = order
     state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
 
@@ -177,6 +170,22 @@ def _advance_calendar(state: GlobalState) -> None:
     )
     state.demand_mean = demand.demand_mean(
         state.day_of_year, state.weekday, state.ambient_weather, state.event_multiplier
+    )
+    state.demand_today = demand.sample_demand(
+        state.inventory_rng,
+        state.day_of_year,
+        state.weekday,
+        state.ambient_weather,
+        state.event_multiplier,
+    )
+    demand.push_history(
+        state.history,
+        state.day_of_year,
+        state.weekday,
+        state.ambient_weather,
+        state.event_multiplier,
+        state.demand_mean,
+        state.demand_today,
     )
 
 

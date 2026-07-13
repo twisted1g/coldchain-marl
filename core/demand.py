@@ -58,16 +58,15 @@ def advance_event(
     return 0, 1.0
 
 
-def generate_series(seed: int, n_days: int) -> DemandSeries:
-    rng = np.random.default_rng(seed)
+def simulate(
+    rng: np.random.Generator, day: int, weekday: int, n_days: int
+) -> tuple[DemandSeries, int, float]:
+    """Roll the demand process forward n_days; returns the series and the
+    event state (days_left, multiplier) as of the last simulated day."""
     weathers = list(Weather)
-    weather_probs = np.array(
-        [config.WEATHER_PRIORS[w] for w in weathers], dtype=float
-    )
+    weather_probs = np.array([config.WEATHER_PRIORS[w] for w in weathers], dtype=float)
     weather_probs /= weather_probs.sum()
 
-    day = int(rng.integers(0, config.DAYS_PER_YEAR))
-    weekday = int(rng.integers(0, config.DAYS_PER_WEEK))
     event_days_left = 0
     event_mult = 1.0
 
@@ -92,7 +91,7 @@ def generate_series(seed: int, n_days: int) -> DemandSeries:
         day = (day + 1) % config.DAYS_PER_YEAR
         weekday = (weekday + 1) % config.DAYS_PER_WEEK
 
-    return DemandSeries(
+    series = DemandSeries(
         day_of_year=days,
         weekday=weekdays,
         weather=weather_idx,
@@ -100,3 +99,49 @@ def generate_series(seed: int, n_days: int) -> DemandSeries:
         demand_mean=means,
         demand=demands,
     )
+    return series, event_days_left, event_mult
+
+
+def generate_series(seed: int, n_days: int) -> DemandSeries:
+    rng = np.random.default_rng(seed)
+    day = int(rng.integers(0, config.DAYS_PER_YEAR))
+    weekday = int(rng.integers(0, config.DAYS_PER_WEEK))
+    series, _, _ = simulate(rng, day, weekday, n_days)
+    return series
+
+
+def backfill_history(
+    rng: np.random.Generator, end_day_of_year: int, end_weekday: int, n_days: int
+) -> tuple[DemandSeries, int, float]:
+    """Pre-episode history: n_days ending at (end_day_of_year, end_weekday) inclusive.
+
+    Daily weather is drawn from priors; the returned event state carries over
+    into the episode so an active spike survives the reset boundary.
+    """
+    start_day = (end_day_of_year - n_days + 1) % config.DAYS_PER_YEAR
+    start_weekday = (end_weekday - n_days + 1) % config.DAYS_PER_WEEK
+    return simulate(rng, start_day, start_weekday, n_days)
+
+
+def push_history(
+    history: DemandSeries,
+    day_of_year: int,
+    weekday: int,
+    weather: Weather,
+    event_multiplier: float,
+    mean: float,
+    demand: float,
+) -> None:
+    """Shift the rolling window one day left and write the newest day last."""
+    values = (
+        day_of_year,
+        weekday,
+        list(Weather).index(weather),
+        event_multiplier,
+        mean,
+        demand,
+    )
+    for field, value in zip(DemandSeries.__slots__, values):
+        arr = getattr(history, field)
+        arr[:-1] = arr[1:]
+        arr[-1] = value
