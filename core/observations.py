@@ -106,12 +106,19 @@ def inventory_obs(state: GlobalState) -> np.ndarray:
     shelf_remaining = max(
         0, get_params(s.fruit_type).base_shelf_life_ticks - s.age_ticks
     )
+    year_phase = 2.0 * np.pi * state.day_of_year / config.DAYS_PER_YEAR
+    week_phase = 2.0 * np.pi * state.weekday / config.DAYS_PER_WEEK
     return np.array(
         [
             state.inventory_level,
             state.demand_forecast,
             float(shelf_remaining),
             state.energy_usage,
+            np.sin(year_phase),
+            np.cos(year_phase),
+            np.sin(week_phase),
+            np.cos(week_phase),
+            float(WEATHER_INDEX[state.ambient_weather]),
         ],
         dtype=np.float32,
     )
