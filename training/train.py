@@ -16,6 +16,7 @@ from training.config import (
     EPISODES_PER_ITERATION,
     EVAL_EPISODES,
     EVAL_SEED,
+    FORECASTER_PATH,
     LEARNERS,
     METRIC,
     MODULES_DIR,
@@ -38,21 +39,40 @@ def _parse_args() -> argparse.Namespace:
         default=LEARNERS,
         help="learners to train; rest stay frozen",
     )
+    p.add_argument(
+        "--forecaster",
+        action="store_true",
+        help="fill demand_forecast with the frozen transformer (default: stub)",
+    )
+    p.add_argument(
+        "--load",
+        nargs="+",
+        default=[],
+        help="learners to warm-start from saved modules (fine-tune)",
+    )
+    p.add_argument(
+        "--tag",
+        default=None,
+        help="suffix for the reward-curve csv (ablation runs don't clobber)",
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
     learners = args.agents
+    forecaster = FORECASTER_PATH if args.forecaster else None
     np.random.seed(SEED)
     torch.manual_seed(SEED)
 
     ARTIFACTS.mkdir(exist_ok=True)
     MODULES_DIR.mkdir(parents=True, exist_ok=True)
 
-    train_env = ColdChainTrainingEnv(env_config(TRAIN_SEED, learners))
-    eval_env = ColdChainTrainingEnv(env_config(EVAL_SEED, learners))
+    train_env = ColdChainTrainingEnv(env_config(TRAIN_SEED, learners, forecaster))
+    eval_env = ColdChainTrainingEnv(env_config(EVAL_SEED, learners, forecaster))
     agents = build_agents(train_env, learners)
+    for a in args.load:
+        agents[a].load(module_dir(a))
 
     fieldnames = ["iteration"]
     for a in learners:
@@ -72,15 +92,18 @@ def main() -> None:
         rows.append(row)
         print(f"iter {it:3d}  " + "  |  ".join(parts))
 
-    with CURVE_CSV.open("w", newline="") as f:
+    curve_csv = (
+        CURVE_CSV.with_stem(f"{CURVE_CSV.stem}_{args.tag}") if args.tag else CURVE_CSV
+    )
+    with curve_csv.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
     for a in learners:
         agents[a].save(module_dir(a))
 
-    _compare(learners)
-    print(f"\nsaved curve -> {CURVE_CSV}\nsaved modules -> {MODULES_DIR}")
+    _compare(learners, forecaster)
+    print(f"\nsaved curve -> {curve_csv}\nsaved modules -> {MODULES_DIR}")
 
 
 def _print_compare(
@@ -94,21 +117,21 @@ def _print_compare(
     )
 
 
-def _compare(learners: list[str]) -> None:
+def _compare(learners: list[str], forecaster=None) -> None:
     """Trained-vs-random sanity check per learner block on a held-out seed set."""
     print("\ntrained vs random:")
     for a in learners:
         if a not in DELIVERY_AGENTS:
-            _compare_block(a, [a])
+            _compare_block(a, [a], forecaster)
     delivery = [a for a in learners if a in DELIVERY_AGENTS]
     if delivery:
-        _compare_block("delivery", delivery)
+        _compare_block("delivery", delivery, forecaster)
 
 
-def _compare_block(name: str, block: list[str]) -> None:
+def _compare_block(name: str, block: list[str], forecaster=None) -> None:
     """Compare one learner block (single agent, or delivery MADDPG vehicle group)."""
     metric_key, direction = METRIC[block[0]]
-    env = ColdChainTrainingEnv(env_config(COMPARE_SEED, block))
+    env = ColdChainTrainingEnv(env_config(COMPARE_SEED, block, forecaster))
 
     trained = build_agents(env, block)
     trained[block[0]].load(module_dir(block[0]))

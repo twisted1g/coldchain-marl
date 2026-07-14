@@ -91,13 +91,18 @@ def module_dir(agent: str) -> Path:
     return MODULES_DIR / agent
 
 
-def env_config(base_seed: int, learners: list[str]) -> dict[str, Any]:
-    return {
+def env_config(
+    base_seed: int, learners: list[str], forecaster: Path | None = None
+) -> dict[str, Any]:
+    cfg: dict[str, Any] = {
         "fruit": FRUIT,
         "max_steps": DEFAULT_MAX_STEPS,
         "base_seed": base_seed,
         "learners": list(learners),
     }
+    if forecaster is not None:
+        cfg["forecaster"] = forecaster
+    return cfg
 
 
 def _build_learner(agent: str, env: ColdChainTrainingEnv) -> Agent:
