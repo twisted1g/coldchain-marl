@@ -7,6 +7,7 @@ from typing import Any
 from core import config as core_config
 from core.config import DELIVERY_AGENTS, FruitKey
 from core.world.fruits import get_params
+from core.world.graph_features import node_delay
 from core.interfaces.observations import all_obs
 from core.world.spoilage import risk_to_label
 from env.pettingzoo_adapter import ColdChainParallelEnv
@@ -42,12 +43,19 @@ DELIVERY_CONFLICT_PENALTY = 5.0
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
 
 
-def _dynamic_pareto(costs: list[tuple[float, float]]) -> float:
-    """Paper Alg 1-5 context-aware weights w_j = a_j*c_j/sum_k(a_k*c_k): returns sum(w_j*c_j)."""
-    total = sum(a * c for a, c in costs)
+def _dynamic_pareto(
+    costs: list[tuple[float, float]], ctx: list[float] | None = None
+) -> float:
+    """Paper Alg 1-5 weights w_j = a_j*ctx_j/sum_k(a_k*ctx_k) applied to costs c_j.
+
+    Boxes 2-5 define ctx as the cost components themselves (the default);
+    Alg 1 computes weights from a separate context vector.
+    """
+    ctx = [c for _, c in costs] if ctx is None else ctx
+    total = sum(a * x for (a, _), x in zip(costs, ctx))
     if total <= 0.0:
         return 0.0
-    return sum(a * c * c for a, c in costs) / total
+    return sum(a * x * c for (a, c), x in zip(costs, ctx)) / total
 
 
 class ColdChainTrainingEnv(ColdChainParallelEnv):
@@ -141,23 +149,38 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         deviation = abs(s.sensor_temperature_c - ideal)
 
         weighted = _dynamic_pareto(
-            [(ENERGY_WEIGHT, energy), (SPOILAGE_WEIGHT, spoilage_delta)]
+            [
+                (DEVIATION_WEIGHT, deviation),
+                (ENERGY_WEIGHT, energy),
+                (SPOILAGE_WEIGHT, spoilage_delta),
+            ]
         )
-        reward = -(weighted + DEVIATION_WEIGHT * deviation) - STEP_PENALTY
+        reward = -weighted - STEP_PENALTY
         return reward, {"temp_deviation": deviation}
 
     def _routing_reward(self) -> tuple[float, dict[str, float]]:
+        """Paper Alg 1: weights from ctx = [dT, traffic, SLA priority] applied to
+        costs [t, sigma, e]. Traffic = disruption delay at the current node; SLA
+        priority = episode-deadline pressure (paper leaves both undefined)."""
         dt_time = self._state.route_travel_time - self._prev["route_travel_time"]
         dt_emissions = self._state.route_emissions - self._prev["route_emissions"]
         risk = self._state.shipment.spoilage_risk
+
+        s = self._state.shipment
+        params = get_params(s.fruit_type)
+        ideal = (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
+        temp_deviation = abs(s.sensor_temperature_c - ideal)
+        traffic = node_delay(self._state, s.current_node)
+        sla_priority = self._state.tick / self._state.max_steps
+
         cost = _dynamic_pareto(
             [
                 (ROUTE_TIME_WEIGHT, dt_time),
-                (ROUTE_EMISSIONS_WEIGHT, dt_emissions),
                 (ROUTE_RISK_WEIGHT, risk),
-            ]
+                (ROUTE_EMISSIONS_WEIGHT, dt_emissions),
+            ],
+            ctx=[temp_deviation, traffic, sla_priority],
         )
-        s = self._state.shipment
         delivered = s.current_node == s.target_node
         reward = -cost + (DELIVERY_BONUS if delivered else 0.0)
         return reward, {"route_cost": cost, "delivered": float(delivered)}
@@ -209,8 +232,14 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             ]
         )
         cost = weighted + conflict
+        slot_cost = (
+            DELIVERY_DELAY_WEIGHT * v.delay
+            + DELIVERY_SLA_WEIGHT * float(v.sla_violated)
+            + conflict
+        )
         return -cost, {
             "delivery_cost": cost,
+            "slot_cost": slot_cost,
             "delay": v.delay,
             "sla_violated": float(v.sla_violated),
             "emissions": v.emissions,

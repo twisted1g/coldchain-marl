@@ -33,7 +33,13 @@ METRIC = {
 }
 # Random routing never reaches the target, so its per-step route_cost is not
 # comparable; the trained-vs-random check uses return (delivery bonus + cost).
-COMPARE_METRIC = {**METRIC, "routing": ("return", "max")}
+# Delivery cost is ~97% route emissions the agent does not control (until the
+# Phase W goods flow): compare on the slot levers only (delay, SLA, conflicts).
+COMPARE_METRIC = {
+    **METRIC,
+    "routing": ("return", "max"),
+    **dict.fromkeys(DELIVERY_AGENTS, ("slot_cost", "min")),
+}
 
 LEARNERS = ["temperature", "routing", "spoilage", "inventory", *DELIVERY_AGENTS]
 
