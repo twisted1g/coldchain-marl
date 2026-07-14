@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from core import config
-from data.generate_demand import load_demand
+from data.generate_demand import DEMAND_DIR, load_demand
 from training.config import FORECASTER_PATH
 from training.forecaster.model import WINDOW, build_features, load_forecaster, make_windows
 
@@ -34,7 +34,7 @@ def main() -> None:
         description="Evaluate the demand forecaster against naive baselines "
         "and the generator noise floor on the test split."
     )
-    parser.add_argument("--data", type=Path, default=Path("data/demand"))
+    parser.add_argument("--data", type=Path, default=DEMAND_DIR)
     parser.add_argument("--checkpoint", type=Path, default=FORECASTER_PATH)
     args = parser.parse_args()
 

@@ -12,6 +12,8 @@ from core import config
 from core.world.demand import DemandSeries, generate_series
 from data.generate import _config_snapshot, _resolved_versions, derive_seed
 
+DEMAND_DIR: Final[Path] = Path(__file__).resolve().parent / "demand"
+
 N_SERIES_DEFAULT: Final[int] = 50
 N_DAYS_DEFAULT: Final[int] = 2000
 TRAIN_FRACTION: Final[float] = 0.7
@@ -87,7 +89,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=config.DEFAULT_SEED)
     parser.add_argument("--series", type=int, default=N_SERIES_DEFAULT)
     parser.add_argument("--days", type=int, default=N_DAYS_DEFAULT)
-    parser.add_argument("--out", type=Path, default=Path("data/demand"))
+    parser.add_argument("--out", type=Path, default=DEMAND_DIR)
     args = parser.parse_args()
     manifest = generate_demand(args.seed, args.series, args.days, args.out)
     print(

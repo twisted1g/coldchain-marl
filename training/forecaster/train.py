@@ -10,7 +10,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from core import config
-from data.generate_demand import load_demand
+from data.generate_demand import DEMAND_DIR, load_demand
 from training.config import FORECASTER_PATH
 from training.forecaster.model import (
     D_MODEL,
@@ -54,7 +54,7 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--epochs", type=int, default=EPOCHS)
-    parser.add_argument("--data", type=Path, default=Path("data/demand"))
+    parser.add_argument("--data", type=Path, default=DEMAND_DIR)
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
