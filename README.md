@@ -34,10 +34,10 @@ Paper-wide mechanisms, implemented across all agents:
 ## Run
 
 ```
-uv run python -m training.train                                   # full joint run (all 5)
-uv run python -m training.train --agents temperature routing      # subset
-uv run python -m training.train --agents delivery_0 delivery_1 delivery_2   # delivery group
-uv run python -m training.pretrain_spoilage                       # regen GNN encoder artifact
+uv run python -m training.marl.train                                   # full joint run (all 5)
+uv run python -m training.marl.train --agents temperature routing      # subset
+uv run python -m training.marl.train --agents delivery_0 delivery_1 delivery_2   # delivery group
+uv run python -m training.marl.pretrain_spoilage                       # regen GNN encoder artifact
 uv run ruff check core env training data
 ```
 
