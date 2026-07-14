@@ -6,9 +6,9 @@ from typing import Any
 
 from core import config as core_config
 from core.config import DELIVERY_AGENTS, FruitKey
-from core.fruits import get_params
-from core.observations import all_obs
-from core.spoilage import risk_to_label
+from core.world.fruits import get_params
+from core.interfaces.observations import all_obs
+from core.world.spoilage import risk_to_label
 from env.pettingzoo_adapter import ColdChainParallelEnv
 
 DEFAULT_FRUIT = FruitKey.STRAWBERRY
@@ -69,7 +69,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._predict_next = None
         forecaster_path = config.get("forecaster")
         if forecaster_path is not None:
-            from training.forecaster import load_forecaster, predict_next
+            from training.forecaster.model import load_forecaster, predict_next
 
             self._forecaster = load_forecaster(forecaster_path)
             self._predict_next = predict_next

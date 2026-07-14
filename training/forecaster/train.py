@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from core import config
 from data.generate_demand import load_demand
 from training.config import FORECASTER_PATH
-from training.forecaster import (
+from training.forecaster.model import (
     D_MODEL,
     N_FEATURES,
     N_HEAD,

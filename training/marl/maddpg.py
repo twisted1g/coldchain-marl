@@ -11,7 +11,7 @@ from tensordict import TensorDict
 from torch import nn
 from torchrl.data import LazyTensorStorage, TensorDictReplayBuffer
 
-from training.agents import _linear_decay, _mlp
+from training.marl.agents import _linear_decay, _mlp
 
 
 class _CentralQNet(nn.Module):

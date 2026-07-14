@@ -8,7 +8,7 @@ import torch
 
 from core.config import DELIVERY_AGENTS
 from env.training_env import ColdChainTrainingEnv
-from training.agents import RandomAgent
+from training.marl.agents import RandomAgent
 from training.config import (
     ARTIFACTS,
     COMPARE_SEED,
@@ -27,8 +27,8 @@ from training.config import (
     env_config,
     module_dir,
 )
-from training.evaluate import rollout
-from training.loop import collect_and_learn
+from training.marl.evaluate import rollout
+from training.marl.loop import collect_and_learn
 
 
 def _parse_args() -> argparse.Namespace:

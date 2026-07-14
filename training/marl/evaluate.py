@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from env.training_env import ColdChainTrainingEnv
-from training.agents import Agent
+from training.marl.agents import Agent
 
 
 def rollout(

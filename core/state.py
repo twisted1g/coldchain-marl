@@ -5,11 +5,12 @@ from dataclasses import dataclass
 import networkx as nx
 import numpy as np
 
-from core import config, demand
+from core import config
+from core.world import demand
 from core.config import FruitKey, Weather
-from core.fruits import get_params
-from core.graph import build_supply_chain, sink_nodes, source_nodes
-from core.noise import Disruption
+from core.world.fruits import get_params
+from core.world.graph import build_supply_chain, sink_nodes, source_nodes
+from core.world.noise import Disruption
 
 _AMBIENT_BASE_TEMP_C: dict[Weather, float] = {
     Weather.SUNNY: 25.0,

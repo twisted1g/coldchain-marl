@@ -6,7 +6,7 @@ from torch import nn
 
 from core import config
 from core.config import Weather
-from core.demand import DemandSeries
+from core.world.demand import DemandSeries
 
 WINDOW = config.DEMAND_HISTORY_DAYS
 SEQ_LEN = WINDOW + 1

@@ -7,8 +7,8 @@ from pettingzoo import ParallelEnv
 
 from core.config import FruitKey
 from core.dynamics import step
-from core.observations import all_obs
-from core.spaces import make_action_spaces, make_observation_spaces
+from core.interfaces.observations import all_obs
+from core.interfaces.spaces import make_action_spaces, make_observation_spaces
 from core.state import GlobalState, init_state
 
 

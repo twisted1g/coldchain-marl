@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from env.training_env import ColdChainTrainingEnv
-from training.agents import Agent
+from training.marl.agents import Agent
 
 
 def collect_and_learn(

@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch_geometric.nn import SAGEConv, global_mean_pool
 
-from core.graph_features import SPOILAGE_NODE_FEATURES
+from core.world.graph_features import SPOILAGE_NODE_FEATURES
 
 GNN_HIDDEN = 64
 GNN_EMBED_DIM = 64

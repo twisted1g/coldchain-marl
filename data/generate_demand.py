@@ -9,7 +9,7 @@ from typing import Any, Final
 import numpy as np
 
 from core import config
-from core.demand import DemandSeries, generate_series
+from core.world.demand import DemandSeries, generate_series
 from data.generate import _config_snapshot, _resolved_versions, derive_seed
 
 N_SERIES_DEFAULT: Final[int] = 50

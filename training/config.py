@@ -8,8 +8,8 @@ import numpy as np
 from core import config as core_config
 from core.config import DELIVERY_AGENTS, OBS_FIELDS_BY_AGENT
 from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
-from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent, SpoilageAgent
-from training.maddpg import DeliveryHandle, MADDPGDelivery
+from training.marl.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent, SpoilageAgent
+from training.marl.maddpg import DeliveryHandle, MADDPGDelivery
 
 SEED = 0
 NUM_ITERATIONS = 150
