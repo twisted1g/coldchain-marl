@@ -31,6 +31,9 @@ METRIC = {
     "inventory": ("inventory_cost", "min"),
     **dict.fromkeys(DELIVERY_AGENTS, ("delivery_cost", "min")),
 }
+# Random routing never reaches the target, so its per-step route_cost is not
+# comparable; the trained-vs-random check uses return (delivery bonus + cost).
+COMPARE_METRIC = {**METRIC, "routing": ("return", "max")}
 
 LEARNERS = ["temperature", "routing", "spoilage", "inventory", *DELIVERY_AGENTS]
 

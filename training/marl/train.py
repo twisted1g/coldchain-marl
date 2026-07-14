@@ -11,6 +11,7 @@ from env.training_env import ColdChainTrainingEnv
 from training.marl.agents import RandomAgent
 from training.config import (
     ARTIFACTS,
+    COMPARE_METRIC,
     COMPARE_SEED,
     CURVE_CSV,
     EPISODES_PER_ITERATION,
@@ -130,7 +131,7 @@ def _compare(learners: list[str], forecaster=None) -> None:
 
 def _compare_block(name: str, block: list[str], forecaster=None) -> None:
     """Compare one learner block (single agent, or delivery MADDPG vehicle group)."""
-    metric_key, direction = METRIC[block[0]]
+    metric_key, direction = COMPARE_METRIC[block[0]]
     env = ColdChainTrainingEnv(env_config(COMPARE_SEED, block, forecaster))
 
     trained = build_agents(env, block)
