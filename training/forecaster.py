@@ -6,8 +6,9 @@ from torch import nn
 
 from core import config
 from core.config import Weather
+from core.demand import DemandSeries
 
-WINDOW = 28
+WINDOW = config.DEMAND_HISTORY_DAYS
 SEQ_LEN = WINDOW + 1
 N_WEATHER = len(Weather)
 N_FEATURES = 6 + N_WEATHER
@@ -88,6 +89,36 @@ class DemandForecaster(nn.Module):
         h = self.input_proj(x) + self.pos_embedding
         h = self.encoder(h)
         return self.head(h[:, -1]).squeeze(-1)
+
+
+@torch.no_grad()
+def predict_next(
+    model: DemandForecaster,
+    history: DemandSeries,
+    day_of_year: int,
+    weekday: int,
+    weather: Weather,
+) -> float:
+    """One-step forecast from a rolling history window + target-day covariates.
+
+    Returns demand in raw units (denormalized)."""
+    arrays = {field: getattr(history, field)[None] for field in DemandSeries.__slots__}
+    features = build_features(arrays)
+
+    angle_year = 2.0 * np.pi * day_of_year / config.DAYS_PER_YEAR
+    angle_week = 2.0 * np.pi * weekday / config.DAYS_PER_WEEK
+    target_token = np.zeros((1, 1, N_FEATURES), dtype=np.float32)
+    target_token[0, 0, 2:6] = (
+        np.sin(angle_year),
+        np.cos(angle_year),
+        np.sin(angle_week),
+        np.cos(angle_week),
+    )
+    target_token[0, 0, 6 + list(Weather).index(weather)] = 1.0
+
+    x = np.concatenate([features, target_token], axis=1)
+    pred = float(model(torch.as_tensor(x)))
+    return max(0.0, pred * config.INVENTORY_DEMAND_MEAN)
 
 
 def load_forecaster(path) -> DemandForecaster:
