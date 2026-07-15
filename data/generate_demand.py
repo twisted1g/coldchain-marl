@@ -10,7 +10,7 @@ import numpy as np
 
 from core import config
 from core.world.demand import DemandSeries, generate_series
-from data.generate import _config_snapshot, _resolved_versions, derive_seed
+from data.generate import config_snapshot, derive_seed, resolved_versions
 
 DEMAND_DIR: Final[Path] = Path(__file__).resolve().parent / "demand"
 
@@ -66,8 +66,8 @@ def generate_demand(
         "fields": list(_FIELDS),
         "split": _split_bounds(n_days),
         "dataset_sha256": _hash_arrays(arrays),
-        "library_versions": _resolved_versions(),
-        "config_snapshot": _config_snapshot(),
+        "library_versions": resolved_versions(),
+        "config_snapshot": config_snapshot(),
     }
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True)

@@ -15,9 +15,13 @@ dependencies = [
     "torchrl>=0.13.2",
 ]
 
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
+
 [tool.ruff.lint.per-file-ignores]
-# Notebooks bootstrap sys.path before importing project modules.
-"notebooks/*.ipynb" = ["E402"]
+# Notebooks bootstrap sys.path before importing project modules;
+# offset zips over paths (zip(p, p[1:])) are intentional.
+"notebooks/*.ipynb" = ["E402", "B905"]
 
 [dependency-groups]
 dev = [

@@ -8,7 +8,6 @@ import torch
 
 from core.config import DELIVERY_AGENTS
 from env.training_env import ColdChainTrainingEnv
-from training.marl.agents import RandomAgent
 from training.config import (
     ARTIFACTS,
     COMPARE_METRIC,
@@ -28,6 +27,7 @@ from training.config import (
     env_config,
     module_dir,
 )
+from training.marl.agents import RandomAgent
 from training.marl.evaluate import rollout
 from training.marl.loop import collect_and_learn
 
@@ -111,10 +111,15 @@ def _print_compare(
     name: str, metric_key: str, direction: str, trained_m: float, random_m: float
 ) -> None:
     better = (random_m - trained_m) if direction == "min" else (trained_m - random_m)
-    margin = better / abs(random_m) if random_m else float("nan")
+    # A near-zero random baseline turns the percent margin into noise
+    # (+14717%); report the absolute gain instead.
+    if abs(random_m) >= 0.05:
+        margin = f"{better / abs(random_m):+.0%}"
+    else:
+        margin = f"{better:+.3f} abs"
     print(
         f"  {name}: trained {metric_key}={trained_m:.3f}  "
-        f"random={random_m:.3f}  ({margin:+.0%})"
+        f"random={random_m:.3f}  ({margin})"
     )
 
 

@@ -6,9 +6,9 @@ from typing import Any
 
 from core import config as core_config
 from core.config import DELIVERY_AGENTS, FruitKey
+from core.interfaces.observations import all_obs
 from core.world.fruits import get_params
 from core.world.graph_features import node_delay
-from core.interfaces.observations import all_obs
 from core.world.spoilage import risk_to_label
 from env.pettingzoo_adapter import ColdChainParallelEnv
 
@@ -52,10 +52,10 @@ def _dynamic_pareto(
     Alg 1 computes weights from a separate context vector.
     """
     ctx = [c for _, c in costs] if ctx is None else ctx
-    total = sum(a * x for (a, _), x in zip(costs, ctx))
+    total = sum(a * x for (a, _), x in zip(costs, ctx, strict=True))
     if total <= 0.0:
         return 0.0
-    return sum(a * x * c for (a, c), x in zip(costs, ctx)) / total
+    return sum(a * x * c for (a, c), x in zip(costs, ctx, strict=True)) / total
 
 
 class ColdChainTrainingEnv(ColdChainParallelEnv):

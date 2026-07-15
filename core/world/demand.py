@@ -141,7 +141,7 @@ def push_history(
         mean,
         demand,
     )
-    for field, value in zip(DemandSeries.__slots__, values):
+    for field, value in zip(DemandSeries.__slots__, values, strict=True):
         arr = getattr(history, field)
         arr[:-1] = arr[1:]
         arr[-1] = value

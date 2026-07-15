@@ -71,7 +71,7 @@ def generate_episode(master_seed: int, episode_id: int) -> EpisodeRecord:
     return episode
 
 
-def _config_snapshot() -> dict[str, Any]:
+def config_snapshot() -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
     for name in dir(config):
         if name.startswith("_"):
@@ -98,7 +98,7 @@ _TRACKED_PACKAGES: tuple[str, ...] = (
 )
 
 
-def _resolved_versions() -> dict[str, str]:
+def resolved_versions() -> dict[str, str]:
     versions: dict[str, str] = {}
     for name in _TRACKED_PACKAGES:
         try:
@@ -137,9 +137,9 @@ def generate(master_seed: int, n_episodes: int, out_dir: Path) -> DatasetManifes
     manifest = DatasetManifest(
         master_seed=master_seed,
         n_episodes=n_episodes,
-        library_versions=_resolved_versions(),
+        library_versions=resolved_versions(),
         dataset_sha256=_hash_episodes(episodes),
-        config_snapshot=_config_snapshot(),
+        config_snapshot=config_snapshot(),
     )
     manifest_dict = _to_jsonable(asdict(manifest)) if is_dataclass(manifest) else {}
     (out_dir / "manifest.json").write_text(
@@ -154,7 +154,9 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=config.DEFAULT_SEED)
     parser.add_argument("--episodes", type=int, default=config.N_EPISODES_DEFAULT)
-    parser.add_argument("--out", type=Path, default=Path("./dataset"))
+    parser.add_argument(
+        "--out", type=Path, default=Path(__file__).resolve().parent / "dataset"
+    )
     args = parser.parse_args()
     manifest = generate(args.seed, args.episodes, args.out)
     print(f"Generated {manifest.n_episodes} episodes → {args.out}")

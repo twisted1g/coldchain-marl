@@ -9,7 +9,12 @@ import torch
 from core import config
 from data.generate_demand import DEMAND_DIR, load_demand
 from training.config import FORECASTER_PATH
-from training.forecaster.model import WINDOW, build_features, load_forecaster, make_windows
+from training.forecaster.model import (
+    WINDOW,
+    build_features,
+    load_forecaster,
+    make_windows,
+)
 
 BATCH_SIZE = 1024
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Final
 
 N_EPISODES_FULL: Final[int] = 10_000
@@ -52,7 +52,7 @@ DEMAND_NOISE_SIGMA: Final[float] = 0.1
 DEMAND_HISTORY_DAYS: Final[int] = 28
 
 
-class FruitKey(str, Enum):
+class FruitKey(StrEnum):
     STRAWBERRY = "strawberry"
     BANANA = "banana"
     ORANGE = "orange"
@@ -69,7 +69,7 @@ HUMIDITY_SEVERITY_SCALE: Final[float] = 0.3
 DELAY_RISK_FACTOR: Final[float] = 0.5
 
 
-class DisruptionType(str, Enum):
+class DisruptionType(StrEnum):
     BLOCKED_NODE = "blocked_node"
     INCREASED_TRANSIT = "increased_transit_time"
     RISK_FLAG = "risk_flag"
@@ -86,7 +86,7 @@ DISRUPTION_TYPE_WEIGHTS: Final[dict[DisruptionType, float]] = {
 DISRUPTION_TRANSIT_DELTA_RANGE: Final[tuple[int, int]] = (1, 3)
 
 
-class Weather(str, Enum):
+class Weather(StrEnum):
     SUNNY = "sunny"
     CLOUDY = "cloudy"
     RAINY = "rainy"

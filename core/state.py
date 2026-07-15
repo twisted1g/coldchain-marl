@@ -6,8 +6,8 @@ import networkx as nx
 import numpy as np
 
 from core import config
-from core.world import demand
 from core.config import FruitKey, Weather
+from core.world import demand
 from core.world.fruits import get_params
 from core.world.graph import build_supply_chain, sink_nodes, source_nodes
 from core.world.noise import Disruption
@@ -215,7 +215,7 @@ def _route_cost(graph: nx.DiGraph, source: str, target: str) -> tuple[float, flo
         return float(config.EPISODE_LEN_MAX), 0.0
     transit = 0.0
     emissions = 0.0
-    for u, v in zip(path[:-1], path[1:]):
+    for u, v in zip(path[:-1], path[1:], strict=True):
         edge = graph.edges[u, v]
         transit += float(edge["base_transit_time"])
         emissions += float(edge["base_emissions"])

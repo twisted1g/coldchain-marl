@@ -6,14 +6,14 @@ from typing import Any
 import numpy as np
 
 from core import config
-from core.world import demand
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
-from core.world.graph_features import node_delay
 from core.interfaces.intention import IntentionBuffer
-from core.world.noise import NoiseModel
 from core.interfaces.observations import all_obs
-from core.world.spoilage import ArrheniusSpoilage, risk_to_label
 from core.state import GlobalState
+from core.world import demand
+from core.world.graph_features import node_delay
+from core.world.noise import NoiseModel
+from core.world.spoilage import ArrheniusSpoilage, risk_to_label
 
 
 @dataclass(slots=True)
