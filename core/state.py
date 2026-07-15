@@ -5,11 +5,12 @@ from dataclasses import dataclass
 import networkx as nx
 import numpy as np
 
-from core import config, demand
+from core import config
 from core.config import FruitKey, Weather
-from core.fruits import get_params
-from core.graph import build_supply_chain, sink_nodes, source_nodes
-from core.noise import Disruption
+from core.world import demand
+from core.world.fruits import get_params
+from core.world.graph import build_supply_chain, sink_nodes, source_nodes
+from core.world.noise import Disruption
 
 _AMBIENT_BASE_TEMP_C: dict[Weather, float] = {
     Weather.SUNNY: 25.0,
@@ -74,6 +75,8 @@ class GlobalState:
     weekday: int
     event_days_left: int
     event_multiplier: float
+    demand_today: float
+    history: demand.DemandSeries
     demand_forecast: float
     energy_usage: float
     fault_signals: int
@@ -128,6 +131,29 @@ def init_state(
     day_of_year = int(inventory_rng.integers(0, config.DAYS_PER_YEAR))
     weekday = int(inventory_rng.integers(0, config.DAYS_PER_WEEK))
 
+    history, event_days_left, event_multiplier = demand.backfill_history(
+        inventory_rng,
+        (day_of_year - 1) % config.DAYS_PER_YEAR,
+        (weekday - 1) % config.DAYS_PER_WEEK,
+        config.DEMAND_HISTORY_DAYS,
+    )
+    event_days_left, event_multiplier = demand.advance_event(
+        inventory_rng, event_days_left, event_multiplier
+    )
+    mean_today = demand.demand_mean(day_of_year, weekday, weather, event_multiplier)
+    demand_today = demand.sample_demand(
+        inventory_rng, day_of_year, weekday, weather, event_multiplier
+    )
+    demand.push_history(
+        history,
+        day_of_year,
+        weekday,
+        weather,
+        event_multiplier,
+        mean_today,
+        demand_today,
+    )
+
     return GlobalState(
         tick=0,
         max_steps=n_steps,
@@ -142,11 +168,13 @@ def init_state(
         inventory_rng=inventory_rng,
         unmet_demand=0.0,
         inventory_order=0.0,
-        demand_mean=demand.demand_mean(day_of_year, weekday, weather, 1.0),
+        demand_mean=mean_today,
         day_of_year=day_of_year,
         weekday=weekday,
-        event_days_left=0,
-        event_multiplier=1.0,
+        event_days_left=event_days_left,
+        event_multiplier=event_multiplier,
+        demand_today=demand_today,
+        history=history,
         demand_forecast=config.INVENTORY_DEMAND_MEAN,
         energy_usage=0.0,
         fault_signals=0,
@@ -187,7 +215,7 @@ def _route_cost(graph: nx.DiGraph, source: str, target: str) -> tuple[float, flo
         return float(config.EPISODE_LEN_MAX), 0.0
     transit = 0.0
     emissions = 0.0
-    for u, v in zip(path[:-1], path[1:]):
+    for u, v in zip(path[:-1], path[1:], strict=True):
         edge = graph.edges[u, v]
         transit += float(edge["base_transit_time"])
         emissions += float(edge["base_emissions"])

@@ -5,14 +5,15 @@ from typing import Any
 
 import numpy as np
 
-from core import config, demand
+from core import config
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
-from core.graph_features import node_delay
-from core.intention import IntentionBuffer
-from core.noise import NoiseModel
-from core.observations import all_obs
-from core.spoilage import ArrheniusSpoilage, risk_to_label
+from core.interfaces.intention import IntentionBuffer
+from core.interfaces.observations import all_obs
 from core.state import GlobalState
+from core.world import demand
+from core.world.graph_features import node_delay
+from core.world.noise import NoiseModel
+from core.world.spoilage import ArrheniusSpoilage, risk_to_label
 
 
 @dataclass(slots=True)
@@ -110,15 +111,8 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
         )
     )
     level = state.inventory_level + order * config.INVENTORY_RESTOCK_SCALE
-    sampled = demand.sample_demand(
-        state.inventory_rng,
-        state.day_of_year,
-        state.weekday,
-        state.ambient_weather,
-        state.event_multiplier,
-    )
-    sold = min(level, sampled)
-    state.unmet_demand = sampled - sold
+    sold = min(level, state.demand_today)
+    state.unmet_demand = state.demand_today - sold
     state.inventory_order = order
     state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
 
@@ -177,6 +171,22 @@ def _advance_calendar(state: GlobalState) -> None:
     )
     state.demand_mean = demand.demand_mean(
         state.day_of_year, state.weekday, state.ambient_weather, state.event_multiplier
+    )
+    state.demand_today = demand.sample_demand(
+        state.inventory_rng,
+        state.day_of_year,
+        state.weekday,
+        state.ambient_weather,
+        state.event_multiplier,
+    )
+    demand.push_history(
+        state.history,
+        state.day_of_year,
+        state.weekday,
+        state.ambient_weather,
+        state.event_multiplier,
+        state.demand_mean,
+        state.demand_today,
     )
 
 

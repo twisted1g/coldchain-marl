@@ -13,9 +13,9 @@ from torchrl.modules import Actor, QValueActor, ValueOperator
 from torchrl.objectives import DDPGLoss, DQNLoss
 from torchrl.objectives.utils import SoftUpdate
 
-from core.graph import build_supply_chain
-from core.graph_features import SPOILAGE_NODE_FEATURES, static_edge_index
-from training.gnn import GNN_EMBED_DIM, SpoilageGNN
+from core.world.graph import build_supply_chain
+from core.world.graph_features import SPOILAGE_NODE_FEATURES, static_edge_index
+from training.marl.gnn import GNN_EMBED_DIM, SpoilageGNN
 
 Action = np.ndarray | np.integer | int
 

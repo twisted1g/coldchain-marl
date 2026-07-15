@@ -8,8 +8,8 @@ import numpy as np
 from core import config as core_config
 from core.config import DELIVERY_AGENTS, OBS_FIELDS_BY_AGENT
 from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
-from training.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent, SpoilageAgent
-from training.maddpg import DeliveryHandle, MADDPGDelivery
+from training.marl.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent, SpoilageAgent
+from training.marl.maddpg import DeliveryHandle, MADDPGDelivery
 
 SEED = 0
 NUM_ITERATIONS = 150
@@ -30,6 +30,15 @@ METRIC = {
     "spoilage": ("fn_rate", "min"),
     "inventory": ("inventory_cost", "min"),
     **dict.fromkeys(DELIVERY_AGENTS, ("delivery_cost", "min")),
+}
+# Random routing never reaches the target, so its per-step route_cost is not
+# comparable; the trained-vs-random check uses return (delivery bonus + cost).
+# Delivery cost is ~97% route emissions the agent does not control (until the
+# Phase W goods flow): compare on the slot levers only (delay, SLA, conflicts).
+COMPARE_METRIC = {
+    **METRIC,
+    "routing": ("return", "max"),
+    **dict.fromkeys(DELIVERY_AGENTS, ("slot_cost", "min")),
 }
 
 LEARNERS = ["temperature", "routing", "spoilage", "inventory", *DELIVERY_AGENTS]
@@ -91,13 +100,18 @@ def module_dir(agent: str) -> Path:
     return MODULES_DIR / agent
 
 
-def env_config(base_seed: int, learners: list[str]) -> dict[str, Any]:
-    return {
+def env_config(
+    base_seed: int, learners: list[str], forecaster: Path | None = None
+) -> dict[str, Any]:
+    cfg: dict[str, Any] = {
         "fruit": FRUIT,
         "max_steps": DEFAULT_MAX_STEPS,
         "base_seed": base_seed,
         "learners": list(learners),
     }
+    if forecaster is not None:
+        cfg["forecaster"] = forecaster
+    return cfg
 
 
 def _build_learner(agent: str, env: ColdChainTrainingEnv) -> Agent:

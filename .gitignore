@@ -14,6 +14,7 @@ artifacts
 # Generated datasets (regenerate from seed)
 data/dataset/
 data/run*/
+data/demand
 
 # Jupyter
 .ipynb_checkpoints/

@@ -10,9 +10,9 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from core import config
-from data.generate_demand import load_demand
+from data.generate_demand import DEMAND_DIR, load_demand
 from training.config import FORECASTER_PATH
-from training.forecaster import (
+from training.forecaster.model import (
     D_MODEL,
     N_FEATURES,
     N_HEAD,
@@ -43,7 +43,7 @@ def _evaluate(model: DemandForecaster, loader: DataLoader) -> dict[str, float]:
         pred = model(x)
         abs_err += float((pred - y).abs().sum())
         sq_err += float(((pred - y) ** 2).sum())
-        last_abs_err += float((x[:, -1, 0] - y).abs().sum())
+        last_abs_err += float((x[:, -2, 0] - y).abs().sum())
         n += len(y)
     return {"mae": abs_err / n, "mse": sq_err / n, "last_value_mae": last_abs_err / n}
 
@@ -54,7 +54,7 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--epochs", type=int, default=EPOCHS)
-    parser.add_argument("--data", type=Path, default=Path("data/demand"))
+    parser.add_argument("--data", type=Path, default=DEMAND_DIR)
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)

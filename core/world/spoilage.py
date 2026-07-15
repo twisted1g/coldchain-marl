@@ -11,7 +11,7 @@ from core.config import (
     RISK_LABEL_THRESHOLD,
     FruitKey,
 )
-from core.fruits import FruitParams, get_params
+from core.world.fruits import FruitParams, get_params
 
 
 class SpoilageModel(Protocol):

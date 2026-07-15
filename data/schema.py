@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 
 from core.config import FruitKey, Weather
-from core.noise import Disruption
+from core.world.noise import Disruption
 
 
 @dataclass(slots=True)

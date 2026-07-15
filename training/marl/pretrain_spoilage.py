@@ -9,12 +9,12 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 from core.dynamics import step
-from core.graph_features import spoilage_node_features, static_edge_index
-from core.spaces import ACTION_SPACES
-from core.spoilage import risk_to_label
+from core.interfaces.spaces import ACTION_SPACES
 from core.state import init_state
+from core.world.graph_features import spoilage_node_features, static_edge_index
+from core.world.spoilage import risk_to_label
 from training.config import SPOILAGE_ENCODER_PATH
-from training.gnn import SpoilagePretrainModel
+from training.marl.gnn import SpoilagePretrainModel
 
 SEED = 0
 N_EPISODES = 1200

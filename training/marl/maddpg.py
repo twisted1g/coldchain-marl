@@ -11,7 +11,7 @@ from tensordict import TensorDict
 from torch import nn
 from torchrl.data import LazyTensorStorage, TensorDictReplayBuffer
 
-from training.agents import _linear_decay, _mlp
+from training.marl.agents import _linear_decay, _mlp
 
 
 class _CentralQNet(nn.Module):
@@ -97,7 +97,7 @@ class MADDPGDelivery:
 
     def _store_joint(self) -> None:
         obs_l, act_l, reward_l, next_l, done_l = zip(
-            *(self._pending[i] for i in range(self._n))
+            *(self._pending[i] for i in range(self._n)), strict=True
         )
         obs = np.stack(obs_l)
         act = np.array(act_l, dtype=np.int64)
@@ -179,7 +179,7 @@ class MADDPGDelivery:
         targets = [*self._target_actors.parameters(), *self._target_critic.parameters()]
         sources = [*self._actors.parameters(), *self._critic.parameters()]
         with torch.no_grad():
-            for tp, p in zip(targets, sources):
+            for tp, p in zip(targets, sources, strict=True):
                 tp.mul_(1.0 - self._tau).add_(self._tau * p)
 
     def save(self, path: Path) -> None:

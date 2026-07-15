@@ -5,9 +5,9 @@ import numpy as np
 
 from core import config
 from core.config import DisruptionType, Weather
-from core.fruits import get_params
-from core.graph_features import spoilage_node_features
 from core.state import GlobalState
+from core.world.fruits import get_params
+from core.world.graph_features import spoilage_node_features
 
 WEATHER_INDEX: dict[Weather, int] = {w: i for i, w in enumerate(Weather)}
 
