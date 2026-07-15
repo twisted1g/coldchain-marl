@@ -111,8 +111,7 @@ def _print_compare(
     name: str, metric_key: str, direction: str, trained_m: float, random_m: float
 ) -> None:
     better = (random_m - trained_m) if direction == "min" else (trained_m - random_m)
-    # A near-zero random baseline turns the percent margin into noise
-    # (+14717%); report the absolute gain instead.
+    # Percent margin is noise when the random baseline is near zero.
     if abs(random_m) >= 0.05:
         margin = f"{better / abs(random_m):+.0%}"
     else:
