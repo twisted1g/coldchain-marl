@@ -76,6 +76,7 @@ class GlobalState:
     event_days_left: int
     event_multiplier: float
     demand_today: float
+    demand_shock_mult: float
     history: demand.DemandSeries
     demand_forecast: float
     energy_usage: float
@@ -174,6 +175,7 @@ def init_state(
         event_days_left=event_days_left,
         event_multiplier=event_multiplier,
         demand_today=demand_today,
+        demand_shock_mult=1.0,
         history=history,
         demand_forecast=config.INVENTORY_DEMAND_MEAN,
         energy_usage=0.0,

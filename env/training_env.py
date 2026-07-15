@@ -68,6 +68,10 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
     With ``config["forecaster"]`` set to a checkpoint path, the frozen transformer
     fills ``state.demand_forecast`` from the rolling history each step; otherwise the
     stub constant stays (stub-vs-transformer ablation).
+
+    With ``config["scenario_bank"]`` set to a bank path, every episode replays one
+    LLM-generated disruption scenario (drawn via the episode rng, or fixed with
+    ``options={"scenario_id": ...}`` on reset).
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
@@ -81,6 +85,13 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
 
             self._forecaster = load_forecaster(forecaster_path)
             self._predict_next = predict_next
+        self._scenario_bank = None
+        self._scenario_runner = None
+        bank_path = config.get("scenario_bank")
+        if bank_path is not None:
+            from llm.scenarios import load_bank
+
+            self._scenario_bank = load_bank(bank_path)
         super().__init__(
             max_steps=config.get("max_steps", DEFAULT_MAX_STEPS),
             fruit=FruitKey(config.get("fruit", DEFAULT_FRUIT)),
@@ -104,6 +115,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         episode_seed = self._base_seed + self._episode_index if seed is None else seed
         obs, infos = super().reset(seed=episode_seed)
         obs = self._apply_forecast(obs)
+        self._scenario_runner = self._pick_scenario(options)
         self._episode_index += 1
         self._prev = {
             "spoilage_risk": self._state.shipment.spoilage_risk,
@@ -127,7 +139,22 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         )
         return all_obs(state)
 
+    def _pick_scenario(self, options: dict[str, Any] | None):
+        if not self._scenario_bank:
+            return None
+        from env.scenarios import ScenarioRunner
+
+        wanted = (options or {}).get("scenario_id")
+        if wanted is not None:
+            scenario = next(s for s in self._scenario_bank if s.id == wanted)
+        else:
+            idx = int(self._state.rng.integers(0, len(self._scenario_bank)))
+            scenario = self._scenario_bank[idx]
+        return ScenarioRunner(scenario, self._state)
+
     def step(self, actions: dict[str, Any]):
+        if self._scenario_runner is not None:
+            self._scenario_runner.before_step(self._state)
         obs, rewards, terminated, truncated, infos = super().step(actions)
         obs = self._apply_forecast(obs)
         for agent, reward_method in self._reward_methods.items():

@@ -169,10 +169,10 @@ def _advance_calendar(state: GlobalState) -> None:
     state.event_days_left, state.event_multiplier = demand.advance_event(
         state.inventory_rng, state.event_days_left, state.event_multiplier
     )
-    state.demand_mean = demand.demand_mean(
+    state.demand_mean = state.demand_shock_mult * demand.demand_mean(
         state.day_of_year, state.weekday, state.ambient_weather, state.event_multiplier
     )
-    state.demand_today = demand.sample_demand(
+    state.demand_today = state.demand_shock_mult * demand.sample_demand(
         state.inventory_rng,
         state.day_of_year,
         state.weekday,
