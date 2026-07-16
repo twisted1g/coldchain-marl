@@ -101,7 +101,11 @@ def module_dir(agent: str) -> Path:
 
 
 def env_config(
-    base_seed: int, learners: list[str], forecaster: Path | None = None
+    base_seed: int,
+    learners: list[str],
+    forecaster: Path | None = None,
+    scenario_bank: str | None = None,
+    scenario_prob: float = 1.0,
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
         "fruit": FRUIT,
@@ -111,6 +115,9 @@ def env_config(
     }
     if forecaster is not None:
         cfg["forecaster"] = forecaster
+    if scenario_bank is not None:
+        cfg["scenario_bank"] = scenario_bank
+        cfg["scenario_prob"] = scenario_prob
     return cfg
 
 
@@ -167,9 +174,14 @@ def build_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Ag
     return agents
 
 
-def load_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Agent]:
-    """Frozen backdrop with trained learner modules loaded from artifacts."""
+def load_agents(
+    env: ColdChainTrainingEnv, learners: list[str], tag: str | None = None
+) -> dict[str, Agent]:
+    """Frozen backdrop with trained learner modules loaded from artifacts.
+
+    ``tag`` selects suffixed module variants (e.g. ``inventory_tf``)."""
     agents = build_agents(env, learners)
     for agent in learners:
-        agents[agent].load(module_dir(agent))
+        path = MODULES_DIR / f"{agent}_{tag}" if tag else module_dir(agent)
+        agents[agent].load(path)
     return agents

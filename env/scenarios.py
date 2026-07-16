@@ -14,13 +14,20 @@ from core.state import GlobalState
 from core.world.noise import Disruption
 from llm.scenarios import Effect, EffectKind, Scenario, TargetRole
 
+# Schema roles vs graph node kinds: the graph names the sink kind "retail".
+_ROLE_TO_KIND = {
+    TargetRole.FARM: "farm",
+    TargetRole.HUB: "hub",
+    TargetRole.DC: "dc",
+    TargetRole.RETAILER: "retail",
+}
+
 
 def _nodes_by_role(state: GlobalState, role: TargetRole) -> list[str]:
     if role is TargetRole.ANY:
         return list(state.graph.nodes)
-    return [
-        n for n, data in state.graph.nodes(data=True) if data["kind"] == role.value
-    ]
+    kind = _ROLE_TO_KIND[role]
+    return [n for n, data in state.graph.nodes(data=True) if data["kind"] == kind]
 
 
 class ScenarioRunner:

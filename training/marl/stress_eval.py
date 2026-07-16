@@ -69,6 +69,10 @@ def main() -> None:
         "--episodes", type=int, default=DEFAULT_EPISODES_PER_SCENARIO,
         help="episodes per scenario (and per-category count for the clean run)",
     )
+    parser.add_argument(
+        "--tag", default=None,
+        help="load suffixed module variants (e.g. scenario-fine-tuned)",
+    )
     args = parser.parse_args()
 
     np.random.seed(SEED)
@@ -84,7 +88,7 @@ def main() -> None:
     for name, block in _blocks(LEARNERS).items():
         metric_key, direction = COMPARE_METRIC[block[0]]
         clean_env = ColdChainTrainingEnv(env_config(STRESS_SEED, block, forecaster))
-        agents = load_agents(clean_env, block)
+        agents = load_agents(clean_env, block, args.tag)
 
         clean_episodes = args.episodes * max(len(v) for v in by_category.values())
         row = {"clean": _block_metric(clean_env, agents, block, metric_key, clean_episodes)}

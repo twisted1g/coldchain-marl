@@ -69,9 +69,11 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
     fills ``state.demand_forecast`` from the rolling history each step; otherwise the
     stub constant stays (stub-vs-transformer ablation).
 
-    With ``config["scenario_bank"]`` set to a bank path, every episode replays one
+    With ``config["scenario_bank"]`` set to a bank path, episodes replay one
     LLM-generated disruption scenario (drawn via the episode rng, or fixed with
-    ``options={"scenario_id": ...}`` on reset).
+    ``options={"scenario_id": ...}`` on reset). ``config["scenario_prob"]``
+    (default 1.0) gates the random draw: with 0.5 half the episodes stay clean,
+    which preserves clean-regime behavior during robustness training.
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
@@ -88,6 +90,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._scenario_bank = None
         self._scenario_runner = None
         bank_path = config.get("scenario_bank")
+        self._scenario_prob = float(config.get("scenario_prob", 1.0))
         if bank_path is not None:
             from llm.scenarios import load_bank
 
@@ -148,6 +151,8 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         if wanted is not None:
             scenario = next(s for s in self._scenario_bank if s.id == wanted)
         else:
+            if self._state.rng.random() >= self._scenario_prob:
+                return None
             idx = int(self._state.rng.integers(0, len(self._scenario_bank)))
             scenario = self._scenario_bank[idx]
         return ScenarioRunner(scenario, self._state)
