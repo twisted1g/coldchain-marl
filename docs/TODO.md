@@ -1,3 +1,48 @@
-### Lead time для inventory
+# Phase W — world fidelity
+
+### W1. Lead time для inventory
 Сейчас заказ пополняет склад в тот же тик — задача почти contextual bandit, прогноз обесценен.
-Ввести задержку заказ→приход: очередь заказов в `GlobalState`, приход через k тиков (k = 2–3 дня, константа в `core/config.py`), продажа против прибывшего. С lead time `demand_forecast` становится необходимым: заказ под спрос дня прибытия. В Phase W очередь заменит реальный поток delivery→inventory, k — фактическое время доставки.
+Ввести задержку заказ→приход: очередь заказов в `GlobalState`, приход через k тиков (k = 2–3 дня, константа в `core/config.py`), продажа против прибывшего. Добавить obs-поле `on_order` для inventory (иначе partial observability). Переучить inventory, повторить абляцию stub-vs-transformer (в G3 она была нулевой — заказы приходили мгновенно). С lead time `demand_forecast` становится необходимым: заказ под спрос дня прибытия.
+
+### W2. Заказ едет на машине
+Очередь W1 заменить реальным потоком delivery→inventory: k — не константа, а фактическое время поездки vehicle. Опоздание к SLA бьёт по стоку, delivery cost перестаёт быть на ~97% неуправляемыми route emissions (см. каннотацию COMPARE_METRIC в `training/config.py`).
+
+### W3. Порча в пути
+In-transit spoilage срезает прибывающее количество: связка spoilage risk → фактический приход. Замыкает цепочку temperature→spoilage→inventory.
+
+### W4. Multi-instance
+Alg 4 line 5: S = {s(1)..s(n)} — несколько складов/маршрутов одновременно. Сейчас мир одноэкземплярный.
+
+### W5. Alg 6 на re-stocks и routes
+Section 4.1: переговоры про "delivery times, re-stocks, and change of routes" — сейчас только delivery slots. После W2 появляются реальные конфликты re-stock (два склада, одна машина) и route (смена маршрута ради SLA). Расширить `SlotParty`/`negotiate` на эти типы конфликтов.
+
+### W6. Stress + compare после W1–W5
+Перепрогнать `stress_eval` и trained-vs-random на новом мире, обновить baseline-профиль. Fingerprint-инструмент (`training/marl/fingerprint.py`) — для контроля детерминизма при каждом инкременте.
+
+# Phase V — визуализация (после Phase W)
+
+### V1. Дашборд мира
+Живая картина эпизода поверх `world_state`: граф маршрутов с позициями vehicles, склад (stock / on_order / прибытия из W1–W2), температура vs пороги, spoilage risk по цепочке, delivery slots и их дедлайны. Тик-за-тиком проигрывание эпизода + скраббинг. Отправная точка — существующие notebooks, целевая форма — standalone (Plotly Dash / Streamlit, решить при дизайне).
+
+### V2. Панель агентов
+Что решает каждый агент и почему: действия по тикам, награды по компонентам shaping, динамика Pareto ω, intention-buffer/ρ. Кривые обучения из `artifacts/reward_curve*.csv` рядом с trained-vs-random маржами.
+
+### V3. Визуализация переговоров (Alg 6)
+Раунды offer/counter-offer, S_t summary, пороги τ_i и утилиты сторон, итоговый assignment; после W5 — те же виды для re-stock/route конфликтов. Статистика медиатора (cache hits, rounds, failures) из `SlotMediator.stats`.
+
+### V4. Стресс-витрина
+Таблица `stress_eval` как heatmap (блок × категория сценария, деградация vs clean), drill-down в эпизод конкретного сценария через V1.
+
+### V5. Доработки после blockchain-фазы
+Слой поверх V1/V3: лента транзакций ledger'а, подписанные контракты как исходы переговоров (agreement → contract), DIDs участников на графе мира, статус smart-contract вызовов (Alg 8–18). Делать только после blockchain, но V1–V3 проектировать так, чтобы слой добавлялся без переделки (события мира — отдельный поток, рендер — подписчик).
+
+# Отложенные неточности vs статья
+
+### Contract signing после agreement (blockchain-фаза)
+Section 4.1: после соглашения контракт подписывается через smart contracts. Ждёт Alg 7/9/14 (Solidity/JSON-RPC стек из статьи). `Agreement` уже несёт всё нужное (assignment + summary).
+
+### Ledger + DIDs (blockchain-фаза)
+Alg 8–18: журнал транзакций, decentralized IDs участников. Отдельная фаза после GenAI/W.
+
+### Repro заявленных чисел (финальная интеграция)
+−50/−35/−25/−30 (и несоответствие 40-vs-50 в тексте статьи), −60% SLA. Проверять только на полном мире: MARL + GenAI + W + blockchain вместе.
