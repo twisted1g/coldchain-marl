@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+from pathlib import Path
 
 import numpy as np
 import torch
 
-from core.config import DELIVERY_AGENTS
 from env.training_env import ColdChainTrainingEnv
 from training.config import (
     ARTIFACTS,
@@ -25,6 +25,7 @@ from training.config import (
     TRAIN_SEED,
     build_agents,
     env_config,
+    learner_blocks,
     module_dir,
 )
 from training.marl.agents import RandomAgent
@@ -56,6 +57,19 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="suffix for the reward-curve csv (ablation runs don't clobber)",
     )
+    p.add_argument(
+        "--scenario-bank",
+        nargs="?",
+        const="data/scenarios/bank.json",
+        default=None,
+        help="train (and eval) with LLM disruption scenarios replayed per episode",
+    )
+    p.add_argument(
+        "--scenario-prob",
+        type=float,
+        default=1.0,
+        help="probability an episode replays a scenario (rest stay clean)",
+    )
     return p.parse_args()
 
 
@@ -69,8 +83,16 @@ def main() -> None:
     ARTIFACTS.mkdir(exist_ok=True)
     MODULES_DIR.mkdir(parents=True, exist_ok=True)
 
-    train_env = ColdChainTrainingEnv(env_config(TRAIN_SEED, learners, forecaster))
-    eval_env = ColdChainTrainingEnv(env_config(EVAL_SEED, learners, forecaster))
+    train_env = ColdChainTrainingEnv(
+        env_config(
+            TRAIN_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob
+        )
+    )
+    eval_env = ColdChainTrainingEnv(
+        env_config(
+            EVAL_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob
+        )
+    )
     agents = build_agents(train_env, learners)
     for a in args.load:
         agents[a].load(module_dir(a))
@@ -101,17 +123,17 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
     for a in learners:
-        agents[a].save(module_dir(a))
+        agents[a].save(module_dir(a, args.tag))
 
-    _compare(learners, forecaster)
+    _compare(learners, forecaster, args.tag)
     print(f"\nsaved curve -> {curve_csv}\nsaved modules -> {MODULES_DIR}")
 
 
 def _print_compare(
     name: str, metric_key: str, direction: str, trained_m: float, random_m: float
 ) -> None:
+    """Percent margin is noise when the random baseline is near zero: report abs."""
     better = (random_m - trained_m) if direction == "min" else (trained_m - random_m)
-    # Percent margin is noise when the random baseline is near zero.
     if abs(random_m) >= 0.05:
         margin = f"{better / abs(random_m):+.0%}"
     else:
@@ -122,24 +144,24 @@ def _print_compare(
     )
 
 
-def _compare(learners: list[str], forecaster=None) -> None:
+def _compare(
+    learners: list[str], forecaster: Path | None = None, tag: str | None = None
+) -> None:
     """Trained-vs-random sanity check per learner block on a held-out seed set."""
     print("\ntrained vs random:")
-    for a in learners:
-        if a not in DELIVERY_AGENTS:
-            _compare_block(a, [a], forecaster)
-    delivery = [a for a in learners if a in DELIVERY_AGENTS]
-    if delivery:
-        _compare_block("delivery", delivery, forecaster)
+    for name, block in learner_blocks(learners).items():
+        _compare_block(name, block, forecaster, tag)
 
 
-def _compare_block(name: str, block: list[str], forecaster=None) -> None:
+def _compare_block(
+    name: str, block: list[str], forecaster: Path | None = None, tag: str | None = None
+) -> None:
     """Compare one learner block (single agent, or delivery MADDPG vehicle group)."""
     metric_key, direction = COMPARE_METRIC[block[0]]
     env = ColdChainTrainingEnv(env_config(COMPARE_SEED, block, forecaster))
 
     trained = build_agents(env, block)
-    trained[block[0]].load(module_dir(block[0]))
+    trained[block[0]].load(module_dir(block[0], tag))
     trained_m = float(
         np.mean([rollout(env, trained, a, EVAL_EPISODES, metric_key)[1] for a in block])
     )

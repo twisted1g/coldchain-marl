@@ -30,6 +30,13 @@ class ColdChainParallelEnv(ParallelEnv):
         self.possible_agents: list[str] = list(self.observation_spaces.keys())
         self.agents: list[str] = list(self.possible_agents)
 
+    @property
+    def world_state(self) -> GlobalState:
+        """Ground-truth world state (PettingZoo reserves ``state()`` for arrays)."""
+        if self._state is None:
+            raise RuntimeError("reset() must be called before accessing world_state")
+        return self._state
+
     def observation_space(self, agent: str) -> gym.Space:
         return self.observation_spaces[agent]
 

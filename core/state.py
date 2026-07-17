@@ -76,6 +76,7 @@ class GlobalState:
     event_days_left: int
     event_multiplier: float
     demand_today: float
+    demand_shock_mult: float
     history: demand.DemandSeries
     demand_forecast: float
     energy_usage: float
@@ -106,7 +107,7 @@ def init_state(
     target = str(rng.choice(sink_nodes(graph)))
 
     params = get_params(fruit)
-    desired_temp = (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
+    desired_temp = params.optimal_temp_c
 
     shipment = Shipment(
         fruit_type=fruit,
@@ -122,7 +123,7 @@ def init_state(
         freshness_score=1.0,
     )
 
-    weather = _sample_weather(rng)
+    weather = demand.sample_weather(rng)
     ambient_temp = _sample_ambient_temp(rng, weather)
     ambient_humidity = _sample_ambient_humidity(rng, weather)
     shipment.sensor_humidity = ambient_humidity
@@ -174,6 +175,7 @@ def init_state(
         event_days_left=event_days_left,
         event_multiplier=event_multiplier,
         demand_today=demand_today,
+        demand_shock_mult=1.0,
         history=history,
         demand_forecast=config.INVENTORY_DEMAND_MEAN,
         energy_usage=0.0,
@@ -220,14 +222,6 @@ def _route_cost(graph: nx.DiGraph, source: str, target: str) -> tuple[float, flo
         transit += float(edge["base_transit_time"])
         emissions += float(edge["base_emissions"])
     return transit, emissions
-
-
-def _sample_weather(rng: np.random.Generator) -> Weather:
-    weathers = list(Weather)
-    weights = np.array([config.WEATHER_PRIORS[w] for w in weathers], dtype=float)
-    weights /= weights.sum()
-    idx = int(rng.choice(len(weathers), p=weights))
-    return weathers[idx]
 
 
 def _sample_ambient_temp(rng: np.random.Generator, weather: Weather) -> float:

@@ -9,7 +9,7 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 from core.dynamics import step
-from core.interfaces.spaces import ACTION_SPACES
+from core.interfaces.spaces import make_action_spaces
 from core.state import init_state
 from core.world.graph_features import spoilage_node_features, static_edge_index
 from core.world.spoilage import risk_to_label
@@ -27,7 +27,7 @@ VAL_FRACTION = 0.2
 
 def _build_samples(seed: int, n_episodes: int) -> list[Data]:
     rng = np.random.default_rng(seed)
-    spaces = dict(ACTION_SPACES)
+    spaces = make_action_spaces()
     for space in spaces.values():
         space.seed(int(rng.integers(0, 2**31 - 1)))
 

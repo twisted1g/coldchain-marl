@@ -12,6 +12,7 @@ def rollout(
     primary: str,
     n_episodes: int,
     metric_key: str,
+    reset_options: dict | None = None,
 ) -> tuple[float, float]:
     """Mean return and per-episode metric for ``primary``, acting greedily.
 
@@ -20,7 +21,7 @@ def rollout(
     returns: list[float] = []
     metrics: list[float] = []
     for _ in range(n_episodes):
-        obs, _ = env.reset()
+        obs, _ = env.reset(options=reset_options)
         done = False
         ep_return = 0.0
         ep_metric: list[float] = []

@@ -1,3 +1,12 @@
+"""Training-side configuration and agent factories for the CTDE loop.
+
+COMPARE_METRIC diverges from METRIC where the per-step metric is not comparable
+against a random baseline: random routing never reaches the target, so the
+trained-vs-random check uses return (delivery bonus + cost); delivery cost is
+~97% route emissions the agent does not control (until the Phase W goods flow),
+so delivery compares on the slot levers only (delay, SLA, conflicts).
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,10 +40,6 @@ METRIC = {
     "inventory": ("inventory_cost", "min"),
     **dict.fromkeys(DELIVERY_AGENTS, ("delivery_cost", "min")),
 }
-# Random routing never reaches the target, so its per-step route_cost is not
-# comparable; the trained-vs-random check uses return (delivery bonus + cost).
-# Delivery cost is ~97% route emissions the agent does not control (until the
-# Phase W goods flow): compare on the slot levers only (delay, SLA, conflicts).
 COMPARE_METRIC = {
     **METRIC,
     "routing": ("return", "max"),
@@ -96,12 +101,26 @@ FORECASTER_PATH = MODULES_DIR / "forecaster" / "forecaster.pt"
 CURVE_CSV = ARTIFACTS / "reward_curve.csv"
 
 
-def module_dir(agent: str) -> Path:
-    return MODULES_DIR / agent
+def module_dir(agent: str, tag: str | None = None) -> Path:
+    """Checkpoint dir for an agent; ``tag`` selects a suffixed variant."""
+    return MODULES_DIR / f"{agent}_{tag}" if tag else MODULES_DIR / agent
+
+
+def learner_blocks(learners: list[str]) -> dict[str, list[str]]:
+    """Evaluation blocks: one per solo learner, delivery vehicles grouped."""
+    blocks = {a: [a] for a in learners if a not in DELIVERY_AGENTS}
+    delivery = [a for a in learners if a in DELIVERY_AGENTS]
+    if delivery:
+        blocks["delivery"] = delivery
+    return blocks
 
 
 def env_config(
-    base_seed: int, learners: list[str], forecaster: Path | None = None
+    base_seed: int,
+    learners: list[str],
+    forecaster: Path | None = None,
+    scenario_bank: str | None = None,
+    scenario_prob: float = 1.0,
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
         "fruit": FRUIT,
@@ -111,6 +130,9 @@ def env_config(
     }
     if forecaster is not None:
         cfg["forecaster"] = forecaster
+    if scenario_bank is not None:
+        cfg["scenario_bank"] = scenario_bank
+        cfg["scenario_prob"] = scenario_prob
     return cfg
 
 
@@ -167,9 +189,13 @@ def build_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Ag
     return agents
 
 
-def load_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Agent]:
-    """Frozen backdrop with trained learner modules loaded from artifacts."""
+def load_agents(
+    env: ColdChainTrainingEnv, learners: list[str], tag: str | None = None
+) -> dict[str, Agent]:
+    """Frozen backdrop with trained learner modules loaded from artifacts.
+
+    ``tag`` selects suffixed module variants (e.g. ``inventory_tf``)."""
     agents = build_agents(env, learners)
     for agent in learners:
-        agents[agent].load(module_dir(agent))
+        agents[agent].load(module_dir(agent, tag))
     return agents

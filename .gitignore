@@ -15,6 +15,7 @@ artifacts
 data/dataset/
 data/run*/
 data/demand
+data/scenarios
 
 # Jupyter
 .ipynb_checkpoints/

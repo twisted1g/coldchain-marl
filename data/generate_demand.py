@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata as md
 import json
 from pathlib import Path
 from typing import Any, Final
@@ -10,9 +11,50 @@ import numpy as np
 
 from core import config
 from core.world.demand import DemandSeries, generate_series
-from data.generate import config_snapshot, derive_seed, resolved_versions
 
 DEMAND_DIR: Final[Path] = Path(__file__).resolve().parent / "demand"
+
+_TRACKED_PACKAGES: Final[tuple[str, ...]] = (
+    "gymnasium",
+    "networkx",
+    "numpy",
+    "pettingzoo",
+    "tensordict",
+    "torch",
+    "torch-geometric",
+    "torchrl",
+)
+
+
+def derive_seed(master_seed: int, series_id: int) -> int:
+    h = hashlib.sha256(f"{master_seed}:{series_id}".encode()).digest()
+    return int.from_bytes(h[:8], "big")
+
+
+def config_snapshot() -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    for name in dir(config):
+        if name.startswith("_"):
+            continue
+        value = getattr(config, name)
+        if isinstance(value, (int, float, str, bool)):
+            snapshot[name] = value
+        elif isinstance(value, tuple) and all(
+            isinstance(x, (int, float, str)) for x in value
+        ):
+            snapshot[name] = list(value)
+    return snapshot
+
+
+def resolved_versions() -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for name in _TRACKED_PACKAGES:
+        try:
+            versions[name] = md.version(name)
+        except md.PackageNotFoundError:
+            versions[name] = "not-installed"
+    return versions
+
 
 N_SERIES_DEFAULT: Final[int] = 50
 N_DAYS_DEFAULT: Final[int] = 2000
