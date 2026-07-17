@@ -34,6 +34,7 @@ SPOILAGE_INSPECTION_WEIGHT = 0.2
 INVENTORY_SPOILAGE_WEIGHT = 5.0
 INVENTORY_HOLDING_WEIGHT = 1.0
 INVENTORY_EMISSIONS_WEIGHT = 1.0
+INVENTORY_STOCKOUT_WEIGHT = 5.0
 
 DELIVERY_DELAY_WEIGHT = 1.0
 DELIVERY_SLA_WEIGHT = 5.0
@@ -238,6 +239,9 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         }
 
     def _inventory_reward(self) -> tuple[float, dict[str, float]]:
+        """Paper Alg 4 reward (Lspoil, H, E) plus a stockout term: the box omits
+        it, but Section 4.1 tasks the agent with "match demand" / "anticipate
+        shortages"; without it order=0 is optimal and the forecast is dead."""
         s = self._state
         spoilage_loss = s.inventory_level * s.shipment.spoilage_risk
         holding = s.inventory_level
@@ -247,6 +251,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
                 (INVENTORY_SPOILAGE_WEIGHT, spoilage_loss),
                 (INVENTORY_HOLDING_WEIGHT, holding),
                 (INVENTORY_EMISSIONS_WEIGHT, emissions),
+                (INVENTORY_STOCKOUT_WEIGHT, s.unmet_demand),
             ]
         )
         return -cost, {

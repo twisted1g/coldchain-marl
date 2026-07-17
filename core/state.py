@@ -70,6 +70,7 @@ class GlobalState:
     inventory_rng: np.random.Generator
     unmet_demand: float
     inventory_order: float
+    pending_orders: list[tuple[int, float]]
     demand_mean: float
     day_of_year: int
     weekday: int
@@ -169,6 +170,7 @@ def init_state(
         inventory_rng=inventory_rng,
         unmet_demand=0.0,
         inventory_order=0.0,
+        pending_orders=[],
         demand_mean=mean_today,
         day_of_year=day_of_year,
         weekday=weekday,

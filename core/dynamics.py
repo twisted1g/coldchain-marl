@@ -103,6 +103,10 @@ def _apply_temperature_action(state: GlobalState, action: Any) -> None:
 def _apply_inventory_action(state: GlobalState, action: Any) -> None:
     if action is None:
         return
+    arrived = sum(qty for due, qty in state.pending_orders if due <= state.tick)
+    state.pending_orders = [(d, q) for d, q in state.pending_orders if d > state.tick]
+    level = min(state.inventory_level + arrived, 1.0)
+
     order = float(
         np.clip(
             np.asarray(action).flatten()[0],
@@ -110,7 +114,13 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
             config.INVENTORY_ACTION_HIGH,
         )
     )
-    level = state.inventory_level + order * config.INVENTORY_RESTOCK_SCALE
+    state.pending_orders.append(
+        (
+            state.tick + config.INVENTORY_LEAD_TIME_TICKS,
+            order * config.INVENTORY_RESTOCK_SCALE,
+        )
+    )
+
     sold = min(level, state.demand_today)
     state.unmet_demand = state.demand_today - sold
     state.inventory_order = order

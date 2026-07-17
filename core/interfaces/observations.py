@@ -109,6 +109,7 @@ def inventory_obs(state: GlobalState) -> np.ndarray:
     return np.array(
         [
             state.inventory_level,
+            sum(qty for _, qty in state.pending_orders),
             state.demand_forecast,
             float(shelf_remaining),
             state.energy_usage,

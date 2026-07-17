@@ -35,6 +35,7 @@ INVENTORY_ACTION_HIGH: Final[float] = 1.0
 INVENTORY_INIT_LEVEL: Final[float] = 1.0
 INVENTORY_DEMAND_MEAN: Final[float] = 0.15
 INVENTORY_RESTOCK_SCALE: Final[float] = 0.25
+INVENTORY_LEAD_TIME_TICKS: Final[int] = 2
 INVENTORY_RNG_OFFSET: Final[int] = 90_001
 
 DAYS_PER_YEAR: Final[int] = 365
@@ -142,6 +143,7 @@ SPOILAGE_OBS_FIELDS: Final[tuple[str, ...]] = tuple(
 
 INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (
     "inventory_level",
+    "on_order",
     "demand_forecast",
     "shelf_life",
     "zone_energy_usage",
