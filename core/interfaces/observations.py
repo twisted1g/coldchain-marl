@@ -15,7 +15,7 @@ _TRANSIT_SCALE = float(config.EDGE_BASE_TRANSIT_TIME_RANGE[1])
 _EMISSIONS_SCALE = float(
     config.EDGE_DISTANCE_KM_RANGE[1] * config.EDGE_BASE_EMISSIONS_PER_KM
 )
-_EDGE_FEATURES = 5
+_EDGE_FEATURES = len(config.EDGE_FEATURE_NAMES)
 
 
 def _traffic_status(state: GlobalState) -> float:

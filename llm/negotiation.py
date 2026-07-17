@@ -5,15 +5,22 @@ involve up to N_VEHICLES claimants, so the protocol is implemented
 n-party (the box is the n=2 case). Mapping onto the box:
 
 - offer O_it = a slot claim grounded in the party's local state (its
-  per-slot cost table, derived from route transit time);
-- S_t = L(H) = a structured summary with a proposed conflict-free slot
-  assignment (the "summary of intents and preferences");
-- utility U_i = -cost_i(assigned slot), computed from S_t;
+  per-slot cost table, derived from route transit time); parties speak
+  in turn (box lines 5-6): each evaluates the offers already on the
+  table and counter-offers — conceding to a free slot only when moving
+  costs less than the conflict penalty;
+- S_t = L(H) = a structured summary of intents with a proposed
+  conflict-free assignment (Section 4.1: the LLM "provides win-win
+  solutions" and its summary "acts as a common ground");
+- utility U_i = -cost_i(own current offer), agreement = the final
+  offers themselves (box line 11: A <- (O_1t, O_2t, S_t)), accepted
+  when offers are conflict-free and every U_i >= tau_i;
 - threshold tau_i = the status-quo utility of keeping the conflicted
   slot and paying the conflict penalty, so an agreement must leave
   every party no worse off than the unresolved conflict;
-- "update proposal strategy based on feedback or regret" = each party
-  concedes to its cheapest slot not claimed by the others in S_t.
+- "update proposal strategy based on feedback or regret" = a party
+  adopts S_t's suggested slot for the next round when that slot meets
+  its threshold, otherwise it stands on its offer.
 
 The LLM proposal is validated (each party assigned exactly once,
 distinct in-range slots, forbidden slots untouched) with reject/retry,
@@ -112,22 +119,61 @@ def negotiate(
     (the conflict then stands and the env penalty applies).
     """
     history: list[dict[str, int]] = []
-    offers = {p.name: p.initial_slot for p in parties}
+    claims = {p.name: p.initial_slot for p in parties}
     for t in range(1, max_rounds + 1):
+        offers = _counter_offers(parties, claims, forbidden)
         history.append(dict(offers))
         if client is None:
-            summary, assignment = _greedy_summary(parties, forbidden)
+            summary, proposal = _greedy_summary(parties, forbidden)
         else:
-            summary, assignment = _llm_summary(client, parties, history, forbidden)
-        if all(p.utility(assignment[p.name]) >= p.threshold for p in parties):
-            return Agreement(assignment, summary, t)
-        offers = {
-            p.name: p.best_slot(
-                forbidden | {s for n, s in assignment.items() if n != p.name}
-            )
-            for p in parties
-        }
+            summary, proposal = _llm_summary(client, parties, history, forbidden)
+        if _accepted(parties, offers):
+            return Agreement(dict(offers), summary, t)
+        claims = _feedback(parties, offers, proposal, forbidden)
     return None
+
+
+def _counter_offers(
+    parties: list[SlotParty], claims: dict[str, int], forbidden: frozenset[int]
+) -> dict[str, int]:
+    """Box lines 5-6: parties speak in turn; each evaluates the offers already
+    on the table and concedes only when moving beats the conflict penalty."""
+    offers: dict[str, int] = {}
+    for p in parties:
+        claim = claims[p.name]
+        if claim in offers.values():
+            alt = p.best_slot(forbidden | frozenset(offers.values()))
+            if p.slot_costs[alt] - p.slot_costs[claim] <= p.conflict_penalty:
+                claim = alt
+        offers[p.name] = claim
+    return offers
+
+
+def _accepted(parties: list[SlotParty], offers: dict[str, int]) -> bool:
+    if len(set(offers.values())) != len(offers):
+        return False
+    return all(p.utility(offers[p.name]) >= p.threshold for p in parties)
+
+
+def _feedback(
+    parties: list[SlotParty],
+    offers: dict[str, int],
+    proposal: dict[str, int],
+    forbidden: frozenset[int],
+) -> dict[str, int]:
+    """Box line 13: adopt S_t's suggestion when it meets the threshold."""
+    claims: dict[str, int] = {}
+    for p in parties:
+        suggested = proposal.get(p.name)
+        if (
+            suggested is not None
+            and suggested not in forbidden
+            and p.utility(suggested) >= p.threshold
+        ):
+            claims[p.name] = suggested
+        else:
+            claims[p.name] = offers[p.name]
+    return claims
 
 
 def _greedy_summary(

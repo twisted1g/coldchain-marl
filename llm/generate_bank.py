@@ -50,7 +50,9 @@ def _effect_spec(category: ScenarioCategory) -> str:
             if kind in TARGETED_KINDS
             else 'target_role: must be "any"'
         )
-        lines.append(f'- kind "{kind}": magnitude {numtype} in [{low}, {high}]; {target}')
+        lines.append(
+            f'- kind "{kind}": magnitude {numtype} in [{low}, {high}]; {target}'
+        )
     return "\n".join(lines)
 
 

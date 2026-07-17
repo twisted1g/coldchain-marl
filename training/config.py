@@ -96,8 +96,18 @@ FORECASTER_PATH = MODULES_DIR / "forecaster" / "forecaster.pt"
 CURVE_CSV = ARTIFACTS / "reward_curve.csv"
 
 
-def module_dir(agent: str) -> Path:
-    return MODULES_DIR / agent
+def module_dir(agent: str, tag: str | None = None) -> Path:
+    """Checkpoint dir for an agent; ``tag`` selects a suffixed variant."""
+    return MODULES_DIR / f"{agent}_{tag}" if tag else MODULES_DIR / agent
+
+
+def learner_blocks(learners: list[str]) -> dict[str, list[str]]:
+    """Evaluation blocks: one per solo learner, delivery vehicles grouped."""
+    blocks = {a: [a] for a in learners if a not in DELIVERY_AGENTS}
+    delivery = [a for a in learners if a in DELIVERY_AGENTS]
+    if delivery:
+        blocks["delivery"] = delivery
+    return blocks
 
 
 def env_config(
@@ -182,6 +192,5 @@ def load_agents(
     ``tag`` selects suffixed module variants (e.g. ``inventory_tf``)."""
     agents = build_agents(env, learners)
     for agent in learners:
-        path = MODULES_DIR / f"{agent}_{tag}" if tag else module_dir(agent)
-        agents[agent].load(path)
+        agents[agent].load(module_dir(agent, tag))
     return agents

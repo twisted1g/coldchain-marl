@@ -19,6 +19,13 @@ class DemandSeries:
     demand: np.ndarray
 
 
+def sample_weather(rng: np.random.Generator) -> Weather:
+    weathers = list(Weather)
+    probs = np.array([config.WEATHER_PRIORS[w] for w in weathers], dtype=float)
+    probs /= probs.sum()
+    return weathers[int(rng.choice(len(weathers), p=probs))]
+
+
 def demand_mean(
     day_of_year: int, weekday: int, weather: Weather, event_mult: float
 ) -> float:
@@ -64,8 +71,6 @@ def simulate(
     """Roll the demand process forward n_days; returns the series and the
     event state (days_left, multiplier) as of the last simulated day."""
     weathers = list(Weather)
-    weather_probs = np.array([config.WEATHER_PRIORS[w] for w in weathers], dtype=float)
-    weather_probs /= weather_probs.sum()
 
     event_days_left = 0
     event_mult = 1.0
@@ -78,7 +83,7 @@ def simulate(
     demands = np.empty(n_days, dtype=np.float64)
 
     for t in range(n_days):
-        weather = weathers[int(rng.choice(len(weathers), p=weather_probs))]
+        weather = sample_weather(rng)
         event_days_left, event_mult = advance_event(rng, event_days_left, event_mult)
 
         days[t] = day

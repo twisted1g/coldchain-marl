@@ -49,10 +49,6 @@ class ScenarioRunner:
         elif upcoming_tick == self.end:
             self._deactivate(state)
 
-    @property
-    def active(self) -> bool:
-        return bool(self._injected) or self._saved_temp is not None
-
     def _activate(self, state: GlobalState) -> None:
         for effect in self.scenario.effects:
             self._apply(state, effect)
@@ -67,7 +63,9 @@ class ScenarioRunner:
                 self._inject(state, Disruption(DisruptionType.BLOCKED_NODE, str(node)))
         elif kind is EffectKind.TRANSIT_DELAY:
             edges = [
-                (u, v) for u, v, data in state.graph.edges(data=True) if not data["wait"]
+                (u, v)
+                for u, v, data in state.graph.edges(data=True)
+                if not data["wait"]
             ]
             u, v = edges[int(state.rng.integers(0, len(edges)))]
             self._inject(

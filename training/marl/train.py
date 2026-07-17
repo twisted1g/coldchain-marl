@@ -6,7 +6,6 @@ import csv
 import numpy as np
 import torch
 
-from core.config import DELIVERY_AGENTS
 from env.training_env import ColdChainTrainingEnv
 from training.config import (
     ARTIFACTS,
@@ -25,6 +24,7 @@ from training.config import (
     TRAIN_SEED,
     build_agents,
     env_config,
+    learner_blocks,
     module_dir,
 )
 from training.marl.agents import RandomAgent
@@ -83,10 +83,14 @@ def main() -> None:
     MODULES_DIR.mkdir(parents=True, exist_ok=True)
 
     train_env = ColdChainTrainingEnv(
-        env_config(TRAIN_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob)
+        env_config(
+            TRAIN_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob
+        )
     )
     eval_env = ColdChainTrainingEnv(
-        env_config(EVAL_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob)
+        env_config(
+            EVAL_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob
+        )
     )
     agents = build_agents(train_env, learners)
     for a in args.load:
@@ -118,8 +122,7 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
     for a in learners:
-        save_dir = MODULES_DIR / f"{a}_{args.tag}" if args.tag else module_dir(a)
-        agents[a].save(save_dir)
+        agents[a].save(module_dir(a, args.tag))
 
     _compare(learners, forecaster, args.tag)
     print(f"\nsaved curve -> {curve_csv}\nsaved modules -> {MODULES_DIR}")
@@ -143,12 +146,8 @@ def _print_compare(
 def _compare(learners: list[str], forecaster=None, tag: str | None = None) -> None:
     """Trained-vs-random sanity check per learner block on a held-out seed set."""
     print("\ntrained vs random:")
-    for a in learners:
-        if a not in DELIVERY_AGENTS:
-            _compare_block(a, [a], forecaster, tag)
-    delivery = [a for a in learners if a in DELIVERY_AGENTS]
-    if delivery:
-        _compare_block("delivery", delivery, forecaster, tag)
+    for name, block in learner_blocks(learners).items():
+        _compare_block(name, block, forecaster, tag)
 
 
 def _compare_block(
@@ -159,10 +158,7 @@ def _compare_block(
     env = ColdChainTrainingEnv(env_config(COMPARE_SEED, block, forecaster))
 
     trained = build_agents(env, block)
-    load_dir = (
-        MODULES_DIR / f"{block[0]}_{tag}" if tag else module_dir(block[0])
-    )
-    trained[block[0]].load(load_dir)
+    trained[block[0]].load(module_dir(block[0], tag))
     trained_m = float(
         np.mean([rollout(env, trained, a, EVAL_EPISODES, metric_key)[1] for a in block])
     )

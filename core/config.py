@@ -3,9 +3,6 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Final
 
-N_EPISODES_FULL: Final[int] = 10_000
-N_EPISODES_DEFAULT: Final[int] = 200
-
 EPISODE_LEN_MIN: Final[int] = 10
 EPISODE_LEN_MAX: Final[int] = 20
 
@@ -108,6 +105,14 @@ DEMAND_WEATHER_MULT: Final[dict[Weather, float]] = {
 }
 
 
+EDGE_FEATURE_NAMES: Final[tuple[str, ...]] = (
+    "transit",
+    "emissions",
+    "reaches_target",
+    "is_target",
+    "is_wait",
+)
+
 ROUTING_OBS_FIELDS: Final[tuple[str, ...]] = (
     "traffic_status",
     "weather",
@@ -117,9 +122,7 @@ ROUTING_OBS_FIELDS: Final[tuple[str, ...]] = (
     "location_index",
     "target_index",
     *tuple(
-        f"edge{i}_{name}"
-        for i in range(N_NEXT_NODES)
-        for name in ("transit", "emissions", "reaches_target", "is_target", "is_wait")
+        f"edge{i}_{name}" for i in range(N_NEXT_NODES) for name in EDGE_FEATURE_NAMES
     ),
 )
 

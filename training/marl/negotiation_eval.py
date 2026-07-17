@@ -20,6 +20,7 @@ import numpy as np
 import torch
 
 from core.config import DELIVERY_AGENTS, N_DELIVERY_WINDOWS
+from core.dynamics import slot_deadline
 from core.state import GlobalState
 from env.training_env import (
     DELIVERY_CONFLICT_PENALTY,
@@ -115,7 +116,7 @@ class SlotMediator:
 
 def _slot_cost(transit: float, slot: int, max_steps: int) -> float:
     """Conflict-free part of the env's slot_cost (core dynamics deadline)."""
-    deadline = (slot + 1) / N_DELIVERY_WINDOWS * max_steps
+    deadline = slot_deadline(slot, max_steps)
     delay = max(0.0, transit - deadline)
     return DELIVERY_DELAY_WEIGHT * delay + DELIVERY_SLA_WEIGHT * float(
         transit > deadline
@@ -138,7 +139,7 @@ def _run_arm(
         while not done:
             actions = {a: agents[a].act(obs[a], explore=False) for a in agents}
             if mediator is not None:
-                actions = mediator.resolve(actions, env._state)
+                actions = mediator.resolve(actions, env.world_state)
             obs, _, terminated, truncated, infos = env.step(actions)
             for a in block:
                 for key in ARM_METRICS:

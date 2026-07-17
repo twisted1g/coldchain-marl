@@ -204,7 +204,9 @@ def _parse_effect(raw: Any, allowed: frozenset[EffectKind]) -> Effect:
     if role is not TargetRole.ANY and kind not in TARGETED_KINDS:
         raise ScenarioValidationError(f"effect {kind} does not take a target role")
 
-    magnitude = _check_number(f"{kind} magnitude", raw.get("magnitude"), *MAGNITUDE_RANGES[kind])
+    magnitude = _check_number(
+        f"{kind} magnitude", raw.get("magnitude"), *MAGNITUDE_RANGES[kind]
+    )
     if kind in INTEGER_KINDS:
         if magnitude != int(magnitude):
             raise ScenarioValidationError(f"{kind} magnitude must be an integer")

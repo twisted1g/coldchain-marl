@@ -35,14 +35,13 @@ class ArrheniusSpoilage:
         dt_ticks: float = 1.0,
     ) -> float:
         params = get_params(fruit)
-        per_tick_at_optimal = RISK_LABEL_THRESHOLD / params.base_shelf_life_ticks
         rate_ratio = self._arrhenius_rate(params, temperature_c) / self._arrhenius_rate(
             params, self._optimal_temp(params)
         )
-        delta = per_tick_at_optimal * rate_ratio * dt_ticks
+        delta = _per_tick_at_optimal(params) * rate_ratio * dt_ticks
         delta += self._chilling_penalty(params, temperature_c) * dt_ticks
         delta += self._humidity_penalty(params, humidity) * dt_ticks
-        delta += per_tick_at_optimal * DELAY_RISK_FACTOR * delay * dt_ticks
+        delta += _per_tick_at_optimal(params) * DELAY_RISK_FACTOR * delay * dt_ticks
         return delta
 
     @staticmethod
@@ -52,8 +51,7 @@ class ArrheniusSpoilage:
             return 0.0
         distance = (low - humidity) if humidity < low else (humidity - high)
         severity = distance / HUMIDITY_SEVERITY_SCALE
-        per_tick_at_optimal = RISK_LABEL_THRESHOLD / params.base_shelf_life_ticks
-        return per_tick_at_optimal * severity
+        return _per_tick_at_optimal(params) * severity
 
     @staticmethod
     def _arrhenius_rate(params: FruitParams, temperature_c: float) -> float:
@@ -73,8 +71,12 @@ class ArrheniusSpoilage:
         if temperature_c >= params.chilling_injury_threshold_c:
             return 0.0
         severity = (params.chilling_injury_threshold_c - temperature_c) / 10.0
-        per_tick_at_optimal = RISK_LABEL_THRESHOLD / params.base_shelf_life_ticks
-        return per_tick_at_optimal * severity
+        return _per_tick_at_optimal(params) * severity
+
+
+def _per_tick_at_optimal(params: FruitParams) -> float:
+    """Risk accrued per tick under optimal storage: threshold over shelf life."""
+    return RISK_LABEL_THRESHOLD / params.base_shelf_life_ticks
 
 
 def risk_to_label(risk: float, threshold: float = RISK_LABEL_THRESHOLD) -> int:

@@ -123,7 +123,7 @@ def init_state(
         freshness_score=1.0,
     )
 
-    weather = _sample_weather(rng)
+    weather = demand.sample_weather(rng)
     ambient_temp = _sample_ambient_temp(rng, weather)
     ambient_humidity = _sample_ambient_humidity(rng, weather)
     shipment.sensor_humidity = ambient_humidity
@@ -222,14 +222,6 @@ def _route_cost(graph: nx.DiGraph, source: str, target: str) -> tuple[float, flo
         transit += float(edge["base_transit_time"])
         emissions += float(edge["base_emissions"])
     return transit, emissions
-
-
-def _sample_weather(rng: np.random.Generator) -> Weather:
-    weathers = list(Weather)
-    weights = np.array([config.WEATHER_PRIORS[w] for w in weathers], dtype=float)
-    weights /= weights.sum()
-    idx = int(rng.choice(len(weathers), p=weights))
-    return weathers[idx]
 
 
 def _sample_ambient_temp(rng: np.random.Generator, weather: Weather) -> float:

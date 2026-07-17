@@ -117,6 +117,11 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
     state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
 
 
+def slot_deadline(slot: int, max_steps: int) -> float:
+    """Tick by which a delivery in this slot must arrive (slots split the episode)."""
+    return (slot + 1) / config.N_DELIVERY_WINDOWS * max_steps
+
+
 def _apply_delivery_action(
     state: GlobalState, actions: dict[str, Any], conflicts: dict[str, bool]
 ) -> None:
@@ -124,7 +129,7 @@ def _apply_delivery_action(
         action = actions.get(f"delivery_{i}")
         slot = 0 if action is None else int(action) % config.N_DELIVERY_WINDOWS
         vehicle.chosen_slot = slot
-        deadline = (slot + 1) / config.N_DELIVERY_WINDOWS * state.max_steps
+        deadline = slot_deadline(slot, state.max_steps)
         vehicle.delay = max(0.0, vehicle.route_transit - deadline)
         vehicle.sla_violated = vehicle.route_transit > deadline
         vehicle.emissions = vehicle.route_emissions

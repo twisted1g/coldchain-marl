@@ -120,12 +120,16 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         obs = self._apply_forecast(obs)
         self._scenario_runner = self._pick_scenario(options)
         self._episode_index += 1
+        self._snapshot_prev()
+        return obs, infos
+
+    def _snapshot_prev(self) -> None:
+        """Remember the cumulative quantities whose deltas feed the rewards."""
         self._prev = {
             "spoilage_risk": self._state.shipment.spoilage_risk,
             "route_travel_time": self._state.route_travel_time,
             "route_emissions": self._state.route_emissions,
         }
-        return obs, infos
 
     def _apply_forecast(self, obs: dict[str, Any]) -> dict[str, Any]:
         """Forecast tomorrow's demand from the history window; rebuild obs so
@@ -166,9 +170,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             reward, metrics = reward_method()
             rewards[agent] = reward
             infos[agent].update(metrics)
-        self._prev["spoilage_risk"] = self._state.shipment.spoilage_risk
-        self._prev["route_travel_time"] = self._state.route_travel_time
-        self._prev["route_emissions"] = self._state.route_emissions
+        self._snapshot_prev()
         return obs, rewards, terminated, truncated, infos
 
     def _temperature_reward(self) -> tuple[float, dict[str, float]]:

@@ -20,9 +20,7 @@ from training.marl.gnn import GNN_EMBED_DIM, SpoilageGNN
 Action = np.ndarray | np.integer | int
 
 
-def _mlp(
-    dims: list[int], *, final_activation: nn.Module | None = None
-) -> nn.Sequential:
+def mlp(dims: list[int], *, final_activation: nn.Module | None = None) -> nn.Sequential:
     layers: list[nn.Module] = []
     for i in range(len(dims) - 1):
         layers.append(nn.Linear(dims[i], dims[i + 1]))
@@ -33,7 +31,7 @@ def _mlp(
     return nn.Sequential(*layers)
 
 
-def _linear_decay(start: float, end: float, step: int, decay_steps: int) -> float:
+def linear_decay(start: float, end: float, step: int, decay_steps: int) -> float:
     frac = min(1.0, step / decay_steps)
     return start + frac * (end - start)
 
@@ -87,11 +85,26 @@ class Agent(Protocol):
     def load(self, path: Path) -> None: ...
 
 
-class FrozenAgent:
+class _StatelessAgent:
+    """Base for policies that neither learn nor persist anything."""
+
+    def observe(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def update(self) -> dict[str, float]:
+        return {}
+
+    def save(self, path: Path) -> None:
+        return None
+
+    def load(self, path: Path) -> None:
+        return None
+
+
+class FrozenAgent(_StatelessAgent):
     """Non-trainable policy emitting a constant action: Discrete->0, Box->midpoint."""
 
     def __init__(self, action_space: Box | Discrete) -> None:
-        self._action_space = action_space
         if isinstance(action_space, Discrete):
             self._action: Action = np.int64(0)
         elif isinstance(action_space, Box):
@@ -103,20 +116,8 @@ class FrozenAgent:
     def act(self, obs: np.ndarray, *, explore: bool) -> Action:
         return self._action
 
-    def observe(self, *args: Any, **kwargs: Any) -> None:
-        return None
 
-    def update(self) -> dict[str, float]:
-        return {}
-
-    def save(self, path: Path) -> None:
-        return None
-
-    def load(self, path: Path) -> None:
-        return None
-
-
-class RandomAgent:
+class RandomAgent(_StatelessAgent):
     """Uniform-random policy over the action space, for trained-vs-random checks."""
 
     def __init__(self, action_space: Box | Discrete) -> None:
@@ -124,18 +125,6 @@ class RandomAgent:
 
     def act(self, obs: np.ndarray, *, explore: bool) -> Action:
         return self._action_space.sample()
-
-    def observe(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-    def update(self) -> dict[str, float]:
-        return {}
-
-    def save(self, path: Path) -> None:
-        return None
-
-    def load(self, path: Path) -> None:
-        return None
 
 
 class _ScaledActor(nn.Module):
@@ -148,7 +137,7 @@ class _ScaledActor(nn.Module):
         high: np.ndarray,
     ) -> None:
         super().__init__()
-        self.net = _mlp([obs_dim, *hidden, act_dim], final_activation=nn.Tanh())
+        self.net = mlp([obs_dim, *hidden, act_dim], final_activation=nn.Tanh())
         self.register_buffer("_low", torch.as_tensor(low, dtype=torch.float32))
         self.register_buffer("_high", torch.as_tensor(high, dtype=torch.float32))
 
@@ -160,7 +149,7 @@ class _ScaledActor(nn.Module):
 class _QNet(nn.Module):
     def __init__(self, obs_dim: int, act_dim: int, hidden: list[int]) -> None:
         super().__init__()
-        self.net = _mlp([obs_dim + act_dim, *hidden, 1])
+        self.net = mlp([obs_dim + act_dim, *hidden, 1])
 
     def forward(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         return self.net(torch.cat([obs, action], dim=-1))
@@ -257,7 +246,7 @@ class DQNAgent:
         self, obs_dim: int, action_space: Discrete, cfg: dict[str, Any]
     ) -> None:
         self._n = int(action_space.n)
-        net = _mlp([obs_dim, *list(cfg["hidden"]), self._n])
+        net = mlp([obs_dim, *list(cfg["hidden"]), self._n])
         self._qnet = QValueActor(
             module=net,
             in_keys=["observation"],
@@ -280,7 +269,7 @@ class DQNAgent:
         self._steps = 0
 
     def _epsilon(self) -> float:
-        return _linear_decay(
+        return linear_decay(
             self._eps_start, self._eps_end, self._steps, self._eps_decay
         )
 
