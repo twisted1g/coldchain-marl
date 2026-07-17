@@ -11,18 +11,7 @@ from tensordict import TensorDict
 from torch import nn
 from torchrl.data import LazyTensorStorage, TensorDictReplayBuffer
 
-from training.marl.agents import linear_decay, mlp
-
-
-class _CentralQNet(nn.Module):
-    def __init__(
-        self, joint_obs_dim: int, joint_act_dim: int, hidden: list[int]
-    ) -> None:
-        super().__init__()
-        self.net = mlp([joint_obs_dim + joint_act_dim, *hidden, 1])
-
-    def forward(self, joint_obs: torch.Tensor, joint_act: torch.Tensor) -> torch.Tensor:
-        return self.net(torch.cat([joint_obs, joint_act], dim=-1))
+from training.marl.agents import QNet, linear_decay, mlp
 
 
 class MADDPGDelivery:
@@ -35,7 +24,7 @@ class MADDPGDelivery:
         hidden = list(cfg["hidden"])
 
         self._actors = nn.ModuleList(mlp([obs_dim, *hidden, n_slots]) for _ in range(n))
-        self._critic = _CentralQNet(n * obs_dim, n * n_slots, hidden)
+        self._critic = QNet(n * obs_dim, n * n_slots, hidden)
         self._target_actors = copy.deepcopy(self._actors)
         self._target_critic = copy.deepcopy(self._critic)
         for p in self._target_actors.parameters():

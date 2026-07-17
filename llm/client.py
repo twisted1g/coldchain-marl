@@ -145,9 +145,8 @@ _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def _extract_content(message: dict[str, Any]) -> str:
-    # Local reasoning models (via LM Studio et al.) may emit their answer
-    # inside <think> tags or entirely in reasoning_content, leaving content
-    # empty.
+    """Local reasoning models (via LM Studio et al.) may emit their answer inside
+    <think> tags or entirely in reasoning_content, leaving content empty."""
     content = _THINK_BLOCK.sub("", message.get("content") or "").strip()
     if content:
         return content

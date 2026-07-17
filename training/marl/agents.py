@@ -146,7 +146,10 @@ class _ScaledActor(nn.Module):
         return self._low + (unit + 1.0) / 2.0 * (self._high - self._low)
 
 
-class _QNet(nn.Module):
+class QNet(nn.Module):
+    """State-action value net over concatenated inputs; also the MADDPG critic
+    with joint obs/action dims."""
+
     def __init__(self, obs_dim: int, act_dim: int, hidden: list[int]) -> None:
         super().__init__()
         self.net = mlp([obs_dim + act_dim, *hidden, 1])
@@ -169,7 +172,7 @@ class DDPGAgent:
             module=actor_net, in_keys=["observation"], out_keys=["action"]
         )
         qval = ValueOperator(
-            module=_QNet(obs_dim, act_dim, hidden), in_keys=["observation", "action"]
+            module=QNet(obs_dim, act_dim, hidden), in_keys=["observation", "action"]
         )
 
         self._loss = DDPGLoss(actor_network=self._actor, value_network=qval)

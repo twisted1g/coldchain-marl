@@ -178,9 +178,9 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         energy = float(self._state.energy_usage)
         spoilage_delta = max(0.0, s.spoilage_risk - self._prev["spoilage_risk"])
 
-        params = get_params(s.fruit_type)
-        ideal = (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
-        deviation = abs(s.sensor_temperature_c - ideal)
+        deviation = abs(
+            s.sensor_temperature_c - get_params(s.fruit_type).optimal_temp_c
+        )
 
         weighted = _dynamic_pareto(
             [
@@ -201,9 +201,9 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         risk = self._state.shipment.spoilage_risk
 
         s = self._state.shipment
-        params = get_params(s.fruit_type)
-        ideal = (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
-        temp_deviation = abs(s.sensor_temperature_c - ideal)
+        temp_deviation = abs(
+            s.sensor_temperature_c - get_params(s.fruit_type).optimal_temp_c
+        )
         traffic = node_delay(self._state, s.current_node)
         sla_priority = self._state.tick / self._state.max_steps
 

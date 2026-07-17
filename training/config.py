@@ -1,3 +1,12 @@
+"""Training-side configuration and agent factories for the CTDE loop.
+
+COMPARE_METRIC diverges from METRIC where the per-step metric is not comparable
+against a random baseline: random routing never reaches the target, so the
+trained-vs-random check uses return (delivery bonus + cost); delivery cost is
+~97% route emissions the agent does not control (until the Phase W goods flow),
+so delivery compares on the slot levers only (delay, SLA, conflicts).
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,10 +40,6 @@ METRIC = {
     "inventory": ("inventory_cost", "min"),
     **dict.fromkeys(DELIVERY_AGENTS, ("delivery_cost", "min")),
 }
-# Random routing never reaches the target, so its per-step route_cost is not
-# comparable; the trained-vs-random check uses return (delivery bonus + cost).
-# Delivery cost is ~97% route emissions the agent does not control (until the
-# Phase W goods flow): compare on the slot levers only (delay, SLA, conflicts).
 COMPARE_METRIC = {
     **METRIC,
     "routing": ("return", "max"),

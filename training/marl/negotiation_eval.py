@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -126,7 +127,7 @@ def _slot_cost(transit: float, slot: int, max_steps: int) -> float:
 def _run_arm(
     mediator: SlotMediator | None,
     episodes: int,
-    forecaster,
+    forecaster: Path | None,
     tag: str | None,
 ) -> dict[str, float]:
     block = list(DELIVERY_AGENTS)

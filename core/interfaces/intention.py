@@ -29,6 +29,3 @@ class IntentionBuffer:
             if len(agents) > 1:
                 for agent in agents:
                     conflicts[agent] = True
-
-    def clear(self) -> None:
-        self._intentions = {}

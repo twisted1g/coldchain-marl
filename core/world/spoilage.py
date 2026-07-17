@@ -36,7 +36,7 @@ class ArrheniusSpoilage:
     ) -> float:
         params = get_params(fruit)
         rate_ratio = self._arrhenius_rate(params, temperature_c) / self._arrhenius_rate(
-            params, self._optimal_temp(params)
+            params, params.optimal_temp_c
         )
         delta = _per_tick_at_optimal(params) * rate_ratio * dt_ticks
         delta += self._chilling_penalty(params, temperature_c) * dt_ticks
@@ -59,10 +59,6 @@ class ArrheniusSpoilage:
         return params.arrhenius_pre_factor * math.exp(
             -params.arrhenius_activation_energy_j_per_mol / (R_GAS * t_kelvin)
         )
-
-    @staticmethod
-    def _optimal_temp(params: FruitParams) -> float:
-        return (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
 
     @staticmethod
     def _chilling_penalty(params: FruitParams, temperature_c: float) -> float:

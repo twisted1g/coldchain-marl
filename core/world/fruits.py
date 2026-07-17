@@ -18,6 +18,10 @@ class FruitParams:
     optimal_humidity_low: float
     optimal_humidity_high: float
 
+    @property
+    def optimal_temp_c(self) -> float:
+        return (self.optimal_temp_low_c + self.optimal_temp_high_c) / 2.0
+
 
 FRUIT_REGISTRY: Final[dict[FruitKey, FruitParams]] = {
     FruitKey.STRAWBERRY: FruitParams(

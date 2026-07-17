@@ -10,6 +10,11 @@ Effects use one flat shape ``{kind, magnitude, target_role}`` because the
 GBNF grammar backing structured output handles flat objects and enums
 reliably but not tagged unions. Numeric ranges are NOT enforced by the
 grammar and are validated here.
+
+``magnitude`` per kind: block_nodes -> node count, transit_delay -> extra
+transit steps (matches DISRUPTION_TRANSIT_DELTA_RANGE), risk_flag -> risk
+level, temp_offset -> delta degrees C, humidity_offset -> delta fraction,
+demand_shock -> demand multiplier.
 """
 
 from __future__ import annotations
@@ -49,10 +54,6 @@ class TargetRole(StrEnum):
     ANY = "any"
 
 
-# Interpretation of ``magnitude`` per kind: block_nodes -> node count,
-# transit_delay -> extra transit steps (matches DISRUPTION_TRANSIT_DELTA_RANGE),
-# risk_flag -> risk level, temp_offset -> delta degrees C,
-# humidity_offset -> delta fraction, demand_shock -> demand multiplier.
 MAGNITUDE_RANGES: dict[EffectKind, tuple[float, float]] = {
     EffectKind.BLOCK_NODES: (1, 2),
     EffectKind.TRANSIT_DELAY: (

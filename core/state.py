@@ -107,7 +107,7 @@ def init_state(
     target = str(rng.choice(sink_nodes(graph)))
 
     params = get_params(fruit)
-    desired_temp = (params.optimal_temp_low_c + params.optimal_temp_high_c) / 2.0
+    desired_temp = params.optimal_temp_c
 
     shipment = Shipment(
         fruit_type=fruit,

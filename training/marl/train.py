@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -131,8 +132,8 @@ def main() -> None:
 def _print_compare(
     name: str, metric_key: str, direction: str, trained_m: float, random_m: float
 ) -> None:
+    """Percent margin is noise when the random baseline is near zero: report abs."""
     better = (random_m - trained_m) if direction == "min" else (trained_m - random_m)
-    # Percent margin is noise when the random baseline is near zero.
     if abs(random_m) >= 0.05:
         margin = f"{better / abs(random_m):+.0%}"
     else:
@@ -143,7 +144,9 @@ def _print_compare(
     )
 
 
-def _compare(learners: list[str], forecaster=None, tag: str | None = None) -> None:
+def _compare(
+    learners: list[str], forecaster: Path | None = None, tag: str | None = None
+) -> None:
     """Trained-vs-random sanity check per learner block on a held-out seed set."""
     print("\ntrained vs random:")
     for name, block in learner_blocks(learners).items():
@@ -151,7 +154,7 @@ def _compare(learners: list[str], forecaster=None, tag: str | None = None) -> No
 
 
 def _compare_block(
-    name: str, block: list[str], forecaster=None, tag: str | None = None
+    name: str, block: list[str], forecaster: Path | None = None, tag: str | None = None
 ) -> None:
     """Compare one learner block (single agent, or delivery MADDPG vehicle group)."""
     metric_key, direction = COMPARE_METRIC[block[0]]
