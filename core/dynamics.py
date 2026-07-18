@@ -45,6 +45,7 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     _advance_thermal_state(state)
     _advance_humidity(state)
     _advance_spoilage(state)
+    _advance_cargo(state)
     _maybe_sample_disruption(state)
     _update_energy(state)
 
@@ -250,6 +251,19 @@ def _advance_calendar(state: GlobalState) -> None:
     )
 
 
+def _advance_cargo(state: GlobalState) -> None:
+    """In-transit spoilage: moving cargo decays with the chain-wide spoilage
+    risk (single-shipment proxy until multi-instance). Queued cargo and cargo
+    waiting for its slot window sit in cold storage and do not decay."""
+    decay = config.TRANSIT_SPOILAGE_RATE * state.shipment.spoilage_risk
+    state.transit_loss = 0.0
+    for c in state.cargo:
+        if c.departure_tick <= state.tick < c.arrival_tick:
+            lost = c.qty * decay
+            c.qty -= lost
+            state.transit_loss += lost
+
+
 def _maybe_sample_disruption(state: GlobalState) -> None:
     noise = NoiseModel(state.rng)
     new_disruption = noise.sample_disruption(state.graph)
@@ -274,7 +288,10 @@ def _build_infos(
             "y_pred": state.spoilage_prediction,
             "ground_truth_label": state.shipment.ground_truth_label,
         },
-        "inventory": {"inventory_level": state.inventory_level},
+        "inventory": {
+            "inventory_level": state.inventory_level,
+            "transit_loss": state.transit_loss,
+        },
     }
     for i, vehicle in enumerate(state.vehicles):
         infos[f"delivery_{i}"] = {

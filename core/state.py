@@ -83,6 +83,7 @@ class GlobalState:
     inventory_order: float
     order_queue: list[float]
     cargo: list[Cargo]
+    transit_loss: float
     demand_mean: float
     day_of_year: int
     weekday: int
@@ -184,6 +185,7 @@ def init_state(
         inventory_order=0.0,
         order_queue=[],
         cargo=[],
+        transit_loss=0.0,
         demand_mean=mean_today,
         day_of_year=day_of_year,
         weekday=weekday,
