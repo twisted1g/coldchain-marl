@@ -109,7 +109,7 @@ def inventory_obs(state: GlobalState) -> np.ndarray:
     return np.array(
         [
             state.inventory_level,
-            sum(qty for _, qty in state.pending_orders),
+            sum(state.order_queue) + sum(c.qty for c in state.cargo),
             state.demand_forecast,
             float(shelf_remaining),
             state.energy_usage,
@@ -125,7 +125,7 @@ def delivery_obs(state: GlobalState, i: int) -> np.ndarray:
     return np.array(
         [
             i / max(1, config.N_VEHICLES - 1),
-            1.0,
+            1.0 if state.tick >= v.busy_until else 0.0,
             float(v.sla_window_ticks) / horizon,
             s.spoilage_risk,
             _breakdown_alerts(state),

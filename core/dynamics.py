@@ -9,7 +9,7 @@ from core import config
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
 from core.interfaces.intention import IntentionBuffer
 from core.interfaces.observations import all_obs
-from core.state import GlobalState
+from core.state import Cargo, GlobalState
 from core.world import demand
 from core.world.graph_features import node_delay
 from core.world.noise import NoiseModel
@@ -103,8 +103,8 @@ def _apply_temperature_action(state: GlobalState, action: Any) -> None:
 def _apply_inventory_action(state: GlobalState, action: Any) -> None:
     if action is None:
         return
-    arrived = sum(qty for due, qty in state.pending_orders if due <= state.tick)
-    state.pending_orders = [(d, q) for d, q in state.pending_orders if d > state.tick]
+    arrived = sum(c.qty for c in state.cargo if c.arrival_tick <= state.tick)
+    state.cargo = [c for c in state.cargo if c.arrival_tick > state.tick]
     level = min(state.inventory_level + arrived, 1.0)
 
     order = float(
@@ -114,12 +114,9 @@ def _apply_inventory_action(state: GlobalState, action: Any) -> None:
             config.INVENTORY_ACTION_HIGH,
         )
     )
-    state.pending_orders.append(
-        (
-            state.tick + config.INVENTORY_LEAD_TIME_TICKS,
-            order * config.INVENTORY_RESTOCK_SCALE,
-        )
-    )
+    qty = order * config.INVENTORY_RESTOCK_SCALE
+    if qty > config.INVENTORY_MIN_ORDER_QTY:
+        state.order_queue.append(qty)
 
     sold = min(level, state.demand_today)
     state.unmet_demand = state.demand_today - sold
@@ -132,6 +129,26 @@ def slot_deadline(slot: int, max_steps: int) -> float:
     return (slot + 1) / config.N_DELIVERY_WINDOWS * max_steps
 
 
+def slot_start(slot: int, max_steps: int) -> float:
+    """Tick at which this slot's delivery window opens."""
+    return slot / config.N_DELIVERY_WINDOWS * max_steps
+
+
+def _vehicle_free(state: GlobalState, i: int) -> bool:
+    return state.tick >= state.vehicles[i].busy_until
+
+
+def expected_lead_time(state: GlobalState) -> int:
+    """Ticks until an order placed now would arrive: transit of the nearest
+    free vehicle, or wait-until-free + transit if all are busy. Ignores slot
+    scheduling and queue backlog — an estimate for the demand forecast horizon."""
+    eta = min(
+        max(0, v.busy_until - state.tick) + int(np.ceil(v.route_transit))
+        for v in state.vehicles
+    )
+    return max(1, eta)
+
+
 def _apply_delivery_action(
     state: GlobalState, actions: dict[str, Any], conflicts: dict[str, bool]
 ) -> None:
@@ -139,11 +156,39 @@ def _apply_delivery_action(
         action = actions.get(f"delivery_{i}")
         slot = 0 if action is None else int(action) % config.N_DELIVERY_WINDOWS
         vehicle.chosen_slot = slot
-        deadline = slot_deadline(slot, state.max_steps)
-        vehicle.delay = max(0.0, vehicle.route_transit - deadline)
-        vehicle.sla_violated = vehicle.route_transit > deadline
-        vehicle.emissions = vehicle.route_emissions
+        vehicle.delay = 0.0
+        vehicle.sla_violated = False
+        vehicle.emissions = 0.0
         vehicle.conflict = conflicts.get(f"delivery_{i}", False)
+    _dispatch_orders(state)
+
+
+def _dispatch_orders(state: GlobalState) -> None:
+    """Nearest free vehicle takes the queue head (paper Alg 5 line 15: distance
+    heuristic); its chosen slot schedules the trip. Departure waits for the slot
+    window; delay/SLA/emissions accrue on the dispatch tick (per trip, not per
+    tick — an idle vehicle neither drives nor emits)."""
+    while state.order_queue:
+        free = [i for i in range(len(state.vehicles)) if _vehicle_free(state, i)]
+        if not free:
+            return
+        i = min(free, key=lambda j: state.vehicles[j].route_transit)
+        vehicle = state.vehicles[i]
+        qty = state.order_queue.pop(0)
+
+        departure = max(
+            state.tick, int(np.ceil(slot_start(vehicle.chosen_slot, state.max_steps)))
+        )
+        arrival = departure + int(np.ceil(vehicle.route_transit))
+        deadline = slot_deadline(vehicle.chosen_slot, state.max_steps)
+
+        vehicle.busy_until = arrival
+        vehicle.delay = max(0.0, arrival - deadline)
+        vehicle.sla_violated = arrival > deadline
+        vehicle.emissions = vehicle.route_emissions
+        state.cargo.append(
+            Cargo(vehicle=i, departure_tick=departure, arrival_tick=arrival, qty=qty)
+        )
 
 
 def _apply_spoilage_action(state: GlobalState, action: Any) -> None:

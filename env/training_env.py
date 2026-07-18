@@ -6,6 +6,7 @@ from typing import Any
 
 from core import config as core_config
 from core.config import DELIVERY_AGENTS, FruitKey
+from core.dynamics import expected_lead_time
 from core.interfaces.observations import all_obs
 from core.world.fruits import get_params
 from core.world.graph_features import node_delay
@@ -135,12 +136,12 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
     def _apply_forecast(self, obs: dict[str, Any]) -> dict[str, Any]:
         """Forecast demand for the order-arrival day (lead time ahead) from the
         history window; rebuild obs so agents act on the updated
-        ``demand_forecast``. An order placed now arrives k ticks later, so the
-        demand that matters is day t+k, not tomorrow."""
+        ``demand_forecast``. An order placed now rides a vehicle, so the day
+        that matters is the expected arrival day, not tomorrow."""
         if self._forecaster is None:
             return obs
         state = self._state
-        horizon = core_config.INVENTORY_LEAD_TIME_TICKS
+        horizon = expected_lead_time(state)
         state.demand_forecast = self._predict_next(
             self._forecaster,
             state.history,

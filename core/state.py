@@ -49,10 +49,21 @@ class VehicleState:
     route_emissions: float
     sla_window_ticks: int
     chosen_slot: int
+    busy_until: int
     delay: float
     emissions: float
     sla_violated: bool
     conflict: bool
+
+
+@dataclass(slots=True)
+class Cargo:
+    """A restock order riding on a vehicle (return trip is instant — deferred)."""
+
+    vehicle: int
+    departure_tick: int
+    arrival_tick: int
+    qty: float
 
 
 @dataclass(slots=True)
@@ -70,7 +81,8 @@ class GlobalState:
     inventory_rng: np.random.Generator
     unmet_demand: float
     inventory_order: float
-    pending_orders: list[tuple[int, float]]
+    order_queue: list[float]
+    cargo: list[Cargo]
     demand_mean: float
     day_of_year: int
     weekday: int
@@ -170,7 +182,8 @@ def init_state(
         inventory_rng=inventory_rng,
         unmet_demand=0.0,
         inventory_order=0.0,
-        pending_orders=[],
+        order_queue=[],
+        cargo=[],
         demand_mean=mean_today,
         day_of_year=day_of_year,
         weekday=weekday,
@@ -203,6 +216,7 @@ def _init_vehicles(graph: nx.DiGraph, source: str, n_steps: int) -> list[Vehicle
                 route_emissions=emissions,
                 sla_window_ticks=sla_window,
                 chosen_slot=0,
+                busy_until=0,
                 delay=0.0,
                 emissions=0.0,
                 sla_violated=False,
