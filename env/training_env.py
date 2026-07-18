@@ -133,16 +133,19 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         }
 
     def _apply_forecast(self, obs: dict[str, Any]) -> dict[str, Any]:
-        """Forecast tomorrow's demand from the history window; rebuild obs so
-        agents act on the updated ``demand_forecast``."""
+        """Forecast demand for the order-arrival day (lead time ahead) from the
+        history window; rebuild obs so agents act on the updated
+        ``demand_forecast``. An order placed now arrives k ticks later, so the
+        demand that matters is day t+k, not tomorrow."""
         if self._forecaster is None:
             return obs
         state = self._state
+        horizon = core_config.INVENTORY_LEAD_TIME_TICKS
         state.demand_forecast = self._predict_next(
             self._forecaster,
             state.history,
-            (state.day_of_year + 1) % core_config.DAYS_PER_YEAR,
-            (state.weekday + 1) % core_config.DAYS_PER_WEEK,
+            (state.day_of_year + horizon) % core_config.DAYS_PER_YEAR,
+            (state.weekday + horizon) % core_config.DAYS_PER_WEEK,
             state.ambient_weather,
         )
         return all_obs(state)
