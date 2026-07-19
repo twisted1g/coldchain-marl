@@ -1,15 +1,5 @@
 # Phase W — world fidelity
 
-### W1. Lead time для inventory
-Сейчас заказ пополняет склад в тот же тик — задача почти contextual bandit, прогноз обесценен.
-Ввести задержку заказ→приход: очередь заказов в `GlobalState`, приход через k тиков (k = 2–3 дня, константа в `core/config.py`), продажа против прибывшего. Добавить obs-поле `on_order` для inventory (иначе partial observability). Переучить inventory, повторить абляцию stub-vs-transformer (в G3 она была нулевой — заказы приходили мгновенно). С lead time `demand_forecast` становится необходимым: заказ под спрос дня прибытия.
-
-### W2. Заказ едет на машине
-Очередь W1 заменить реальным потоком delivery→inventory: k — не константа, а фактическое время поездки vehicle. Опоздание к SLA бьёт по стоку, delivery cost перестаёт быть на ~97% неуправляемыми route emissions (см. каннотацию COMPARE_METRIC в `training/config.py`).
-
-### W3. Порча в пути
-In-transit spoilage срезает прибывающее количество: связка spoilage risk → фактический приход. Замыкает цепочку temperature→spoilage→inventory.
-
 ### W4. Multi-instance
 Alg 4 line 5: S = {s(1)..s(n)} — несколько складов/маршрутов одновременно. Сейчас мир одноэкземплярный.
 
@@ -37,6 +27,9 @@ Section 4.1: переговоры про "delivery times, re-stocks, and change 
 Слой поверх V1/V3: лента транзакций ledger'а, подписанные контракты как исходы переговоров (agreement → contract), DIDs участников на графе мира, статус smart-contract вызовов (Alg 8–18). Делать только после blockchain, но V1–V3 проектировать так, чтобы слой добавлялся без переделки (события мира — отдельный поток, рендер — подписчик).
 
 # Отложенные неточности vs статья
+
+### Обратный путь машины (Phase W)
+W2 делает обратный путь мгновенным: round-trip при 3 машинах и transit ~4.5 даёт ~1.1 поставки за эпизод против спроса ~2.25 — структурный stockout. Вернуть round-trip только вместе с рекалибровкой (больше машин / короче маршруты / крупнее заказы).
 
 ### Contract signing после agreement (blockchain-фаза)
 Section 4.1: после соглашения контракт подписывается через smart contracts. Ждёт Alg 7/9/14 (Solidity/JSON-RPC стек из статьи). `Agreement` уже несёт всё нужное (assignment + summary).
