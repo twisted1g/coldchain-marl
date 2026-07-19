@@ -101,18 +101,23 @@ def spoilage_obs(state: GlobalState) -> np.ndarray:
     return spoilage_node_features(state).flatten()
 
 
-def inventory_obs(state: GlobalState) -> np.ndarray:
+def inventory_obs(state: GlobalState, i: int) -> np.ndarray:
     s = state.shipment
     shelf_remaining = max(
         0, get_params(s.fruit_type).base_shelf_life_ticks - s.age_ticks
     )
+    on_order = sum(qty for inst, qty in state.order_queue if inst == i) + sum(
+        c.qty for c in state.cargo if c.instance == i
+    )
+    peers = [lvl for j, lvl in enumerate(state.inventory_levels) if j != i]
     return np.array(
         [
-            state.inventory_level,
-            sum(state.order_queue) + sum(c.qty for c in state.cargo),
-            state.demand_forecast,
+            state.inventory_levels[i],
+            on_order,
+            state.demand_forecast[i],
             float(shelf_remaining),
             state.energy_usage,
+            float(np.mean(peers)) if peers else 0.0,
         ],
         dtype=np.float32,
     )
@@ -140,8 +145,9 @@ def all_obs(state: GlobalState) -> dict[str, np.ndarray]:
         "routing": routing_obs(state),
         "temperature": temperature_obs(state),
         "spoilage": spoilage_obs(state),
-        "inventory": inventory_obs(state),
     }
+    for i, name in enumerate(config.INVENTORY_AGENTS):
+        obs[name] = inventory_obs(state, i)
     for i, name in enumerate(config.DELIVERY_AGENTS):
         obs[name] = delivery_obs(state, i)
     return obs

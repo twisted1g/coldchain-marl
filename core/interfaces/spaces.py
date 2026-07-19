@@ -24,12 +24,15 @@ def make_action_spaces() -> dict[str, gym.Space]:
             shape=(1,),
             dtype=np.float32,
         ),
-        "inventory": Box(
-            low=config.INVENTORY_ACTION_LOW,
-            high=config.INVENTORY_ACTION_HIGH,
-            shape=(1,),
-            dtype=np.float32,
-        ),
+        **{
+            name: Box(
+                low=config.INVENTORY_ACTION_LOW,
+                high=config.INVENTORY_ACTION_HIGH,
+                shape=(1,),
+                dtype=np.float32,
+            )
+            for name in config.INVENTORY_AGENTS
+        },
         **{
             name: Discrete(config.N_DELIVERY_WINDOWS) for name in config.DELIVERY_AGENTS
         },

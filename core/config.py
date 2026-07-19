@@ -32,9 +32,11 @@ TEMPERATURE_ACTION_HIGH_C: Final[float] = 30.0
 INVENTORY_ACTION_LOW: Final[float] = 0.0
 INVENTORY_ACTION_HIGH: Final[float] = 1.0
 
+N_INVENTORY_INSTANCES: Final[int] = N_RETAILERS
+
 INVENTORY_INIT_LEVEL: Final[float] = 1.0
 INVENTORY_DEMAND_MEAN: Final[float] = 0.15
-INVENTORY_RESTOCK_SCALE: Final[float] = 0.25
+INVENTORY_RESTOCK_SCALE: Final[float] = 1.0
 INVENTORY_MIN_ORDER_QTY: Final[float] = 0.05
 TRANSIT_SPOILAGE_RATE: Final[float] = 0.05
 INVENTORY_RNG_OFFSET: Final[int] = 90_001
@@ -148,6 +150,11 @@ INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (
     "demand_forecast",
     "shelf_life",
     "zone_energy_usage",
+    "peer_stock",
+)
+
+INVENTORY_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"inventory_{i}" for i in range(N_INVENTORY_INSTANCES)
 )
 
 DELIVERY_OBS_FIELDS: Final[tuple[str, ...]] = (
@@ -167,6 +174,6 @@ OBS_FIELDS_BY_AGENT: Final[dict[str, tuple[str, ...]]] = {
     "routing": ROUTING_OBS_FIELDS,
     "temperature": TEMPERATURE_OBS_FIELDS,
     "spoilage": SPOILAGE_OBS_FIELDS,
-    "inventory": INVENTORY_OBS_FIELDS,
+    **dict.fromkeys(INVENTORY_AGENTS, INVENTORY_OBS_FIELDS),
     **dict.fromkeys(DELIVERY_AGENTS, DELIVERY_OBS_FIELDS),
 }

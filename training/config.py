@@ -15,9 +15,16 @@ from typing import Any
 import numpy as np
 
 from core import config as core_config
-from core.config import DELIVERY_AGENTS, OBS_FIELDS_BY_AGENT
+from core.config import DELIVERY_AGENTS, INVENTORY_AGENTS, OBS_FIELDS_BY_AGENT
 from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
-from training.marl.agents import Agent, DDPGAgent, DQNAgent, FrozenAgent, SpoilageAgent
+from training.marl.agents import (
+    Agent,
+    DDPGAgent,
+    DQNAgent,
+    FrozenAgent,
+    SharedHandle,
+    SpoilageAgent,
+)
 from training.marl.maddpg import DeliveryHandle, MADDPGDelivery
 
 SEED = 0
@@ -30,14 +37,14 @@ ALGO = {
     "temperature": "DDPG",
     "routing": "DQN",
     "spoilage": "SPOILAGE_GNN",
-    "inventory": "DDPG",
+    **dict.fromkeys(INVENTORY_AGENTS, "DDPG"),
     **dict.fromkeys(DELIVERY_AGENTS, "MADDPG"),
 }
 METRIC = {
     "temperature": ("temp_deviation", "min"),
     "routing": ("route_cost", "min"),
     "spoilage": ("fn_rate", "min"),
-    "inventory": ("inventory_cost", "min"),
+    **dict.fromkeys(INVENTORY_AGENTS, ("inventory_cost", "min")),
     **dict.fromkeys(DELIVERY_AGENTS, ("delivery_cost", "min")),
 }
 COMPARE_METRIC = {
@@ -46,7 +53,7 @@ COMPARE_METRIC = {
     **dict.fromkeys(DELIVERY_AGENTS, ("slot_cost", "min")),
 }
 
-LEARNERS = ["temperature", "routing", "spoilage", "inventory", *DELIVERY_AGENTS]
+LEARNERS = ["temperature", "routing", "spoilage", *INVENTORY_AGENTS, *DELIVERY_AGENTS]
 
 FRUIT = "banana"
 TRAIN_SEED = 1000
@@ -107,8 +114,13 @@ def module_dir(agent: str, tag: str | None = None) -> Path:
 
 
 def learner_blocks(learners: list[str]) -> dict[str, list[str]]:
-    """Evaluation blocks: one per solo learner, delivery vehicles grouped."""
-    blocks = {a: [a] for a in learners if a not in DELIVERY_AGENTS}
+    """Evaluation blocks: one per solo learner; inventory instances and
+    delivery vehicles grouped."""
+    grouped = (*INVENTORY_AGENTS, *DELIVERY_AGENTS)
+    blocks = {a: [a] for a in learners if a not in grouped}
+    inventory = [a for a in learners if a in INVENTORY_AGENTS]
+    if inventory:
+        blocks["inventory"] = inventory
     delivery = [a for a in learners if a in DELIVERY_AGENTS]
     if delivery:
         blocks["delivery"] = delivery
@@ -168,20 +180,32 @@ def _build_delivery_group(
     return {name: DeliveryHandle(group, i) for i, name in enumerate(delivery_learners)}
 
 
+def _build_inventory_group(
+    env: ColdChainTrainingEnv, inventory_learners: list[str]
+) -> dict[str, Agent]:
+    """One shared DDPG policy over symmetric instances (paper Alg 4 S={s(i)})."""
+    first = inventory_learners[0]
+    obs_dim = int(np.prod(env.observation_space(first).shape))
+    shared = DDPGAgent(obs_dim, env.action_space(first), ALGO_CFG["DDPG"])
+    return {name: SharedHandle(shared, i) for i, name in enumerate(inventory_learners)}
+
+
 def build_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Agent]:
     """All agents for the CTDE loop: learners get their algorithm, rest frozen.
 
-    Delivery learners share one MADDPGDelivery group (paper Alg 5 shared critic).
+    Delivery learners share one MADDPGDelivery group (paper Alg 5 shared critic);
+    inventory learners share one DDPG policy.
     """
     delivery_learners = [a for a in AGENTS if a in learners and a in DELIVERY_AGENTS]
-    delivery_agents = (
-        _build_delivery_group(env, delivery_learners) if delivery_learners else {}
-    )
+    grouped = _build_delivery_group(env, delivery_learners) if delivery_learners else {}
+    inventory_learners = [a for a in AGENTS if a in learners and a in INVENTORY_AGENTS]
+    if inventory_learners:
+        grouped |= _build_inventory_group(env, inventory_learners)
 
     agents: dict[str, Agent] = {}
     for agent in AGENTS:
-        if agent in delivery_agents:
-            agents[agent] = delivery_agents[agent]
+        if agent in grouped:
+            agents[agent] = grouped[agent]
         elif agent in learners:
             agents[agent] = _build_learner(agent, env)
         else:

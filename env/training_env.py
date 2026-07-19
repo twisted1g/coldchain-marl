@@ -5,7 +5,7 @@ from functools import partial
 from typing import Any
 
 from core import config as core_config
-from core.config import DELIVERY_AGENTS, FruitKey
+from core.config import DELIVERY_AGENTS, INVENTORY_AGENTS, FruitKey
 from core.dynamics import expected_lead_time
 from core.interfaces.observations import all_obs
 from core.world.fruits import get_params
@@ -36,6 +36,7 @@ INVENTORY_SPOILAGE_WEIGHT = 5.0
 INVENTORY_HOLDING_WEIGHT = 1.0
 INVENTORY_EMISSIONS_WEIGHT = 1.0
 INVENTORY_STOCKOUT_WEIGHT = 5.0
+INVENTORY_CONFLICT_PENALTY = 5.0
 
 DELIVERY_DELAY_WEIGHT = 1.0
 DELIVERY_SLA_WEIGHT = 5.0
@@ -105,7 +106,10 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             "temperature": self._temperature_reward,
             "routing": self._routing_reward,
             "spoilage": self._spoilage_reward,
-            "inventory": self._inventory_reward,
+            **{
+                name: partial(self._inventory_reward, i)
+                for i, name in enumerate(INVENTORY_AGENTS)
+            },
             **{
                 name: partial(self._delivery_reward, i)
                 for i, name in enumerate(DELIVERY_AGENTS)
@@ -134,21 +138,22 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         }
 
     def _apply_forecast(self, obs: dict[str, Any]) -> dict[str, Any]:
-        """Forecast demand for the order-arrival day (lead time ahead) from the
-        history window; rebuild obs so agents act on the updated
-        ``demand_forecast``. An order placed now rides a vehicle, so the day
-        that matters is the expected arrival day, not tomorrow."""
+        """Forecast demand for each instance's order-arrival day (lead time
+        ahead) from its history window; rebuild obs so agents act on the
+        updated ``demand_forecast``. An order placed now rides a vehicle, so
+        the day that matters is the expected arrival day, not tomorrow."""
         if self._forecaster is None:
             return obs
         state = self._state
-        horizon = expected_lead_time(state)
-        state.demand_forecast = self._predict_next(
-            self._forecaster,
-            state.history,
-            (state.day_of_year + horizon) % core_config.DAYS_PER_YEAR,
-            (state.weekday + horizon) % core_config.DAYS_PER_WEEK,
-            state.ambient_weather,
-        )
+        for i, history in enumerate(state.histories):
+            horizon = expected_lead_time(state, i)
+            state.demand_forecast[i] = self._predict_next(
+                self._forecaster,
+                history,
+                (state.day_of_year + horizon) % core_config.DAYS_PER_YEAR,
+                (state.weekday + horizon) % core_config.DAYS_PER_WEEK,
+                state.ambient_weather,
+            )
         return all_obs(state)
 
     def _pick_scenario(self, options: dict[str, Any] | None):
@@ -242,26 +247,32 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             "spoilage_label": label,
         }
 
-    def _inventory_reward(self) -> tuple[float, dict[str, float]]:
+    def _inventory_reward(self, i: int) -> tuple[float, dict[str, float]]:
         """Paper Alg 4 reward (Lspoil, H, E) plus a stockout term: the box omits
         it, but Section 4.1 tasks the agent with "match demand" / "anticipate
-        shortages"; without it order=0 is optimal and the forecast is dead."""
+        shortages"; without it order=0 is optimal and the forecast is dead.
+        Supply contention (line 9) adds the coordination penalty ρ."""
         s = self._state
-        spoilage_loss = s.inventory_level * s.shipment.spoilage_risk
-        holding = s.inventory_level
-        emissions = s.inventory_order
-        cost = _dynamic_pareto(
-            [
-                (INVENTORY_SPOILAGE_WEIGHT, spoilage_loss),
-                (INVENTORY_HOLDING_WEIGHT, holding),
-                (INVENTORY_EMISSIONS_WEIGHT, emissions),
-                (INVENTORY_STOCKOUT_WEIGHT, s.unmet_demand),
-            ]
+        level = s.inventory_levels[i]
+        spoilage_loss = level * s.shipment.spoilage_risk
+        emissions = s.inventory_order[i]
+        conflict = INVENTORY_CONFLICT_PENALTY if s.inventory_conflict[i] else 0.0
+        cost = (
+            _dynamic_pareto(
+                [
+                    (INVENTORY_SPOILAGE_WEIGHT, spoilage_loss),
+                    (INVENTORY_HOLDING_WEIGHT, level),
+                    (INVENTORY_EMISSIONS_WEIGHT, emissions),
+                    (INVENTORY_STOCKOUT_WEIGHT, s.unmet_demand[i]),
+                ]
+            )
+            + conflict
         )
         return -cost, {
             "inventory_cost": cost,
-            "unmet_demand": s.unmet_demand,
-            "inventory_level": s.inventory_level,
+            "unmet_demand": s.unmet_demand[i],
+            "inventory_level": level,
+            "conflict": float(s.inventory_conflict[i]),
         }
 
     def _delivery_reward(self, i: int) -> tuple[float, dict[str, float]]:

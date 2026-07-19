@@ -34,11 +34,12 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
 
     buffer = IntentionBuffer()
     buffer.declare_all(actions)
-    conflicts = buffer.detect()
+    free = sum(1 for i in range(len(state.vehicles)) if _vehicle_free(state, i))
+    conflicts = buffer.detect(free_vehicles=free)
 
     _apply_temperature_action(state, actions.get("temperature"))
     _apply_routing_action(state, actions.get("routing"))
-    _apply_inventory_action(state, actions.get("inventory"))
+    _apply_inventory_action(state, actions, conflicts)
     _apply_delivery_action(state, actions, conflicts)
     _apply_spoilage_action(state, actions.get("spoilage"))
 
@@ -101,28 +102,40 @@ def _apply_temperature_action(state: GlobalState, action: Any) -> None:
     )
 
 
-def _apply_inventory_action(state: GlobalState, action: Any) -> None:
-    if action is None:
-        return
-    arrived = sum(c.qty for c in state.cargo if c.arrival_tick <= state.tick)
-    state.cargo = [c for c in state.cargo if c.arrival_tick > state.tick]
-    level = min(state.inventory_level + arrived, 1.0)
-
-    order = float(
-        np.clip(
-            np.asarray(action).flatten()[0],
-            config.INVENTORY_ACTION_LOW,
-            config.INVENTORY_ACTION_HIGH,
+def _apply_inventory_action(
+    state: GlobalState, actions: dict[str, Any], conflicts: dict[str, bool]
+) -> None:
+    for i in range(config.N_INVENTORY_INSTANCES):
+        agent = f"inventory_{i}"
+        state.inventory_conflict[i] = conflicts.get(agent, False)
+        arrived = sum(
+            c.qty
+            for c in state.cargo
+            if c.instance == i and c.arrival_tick <= state.tick
         )
-    )
-    qty = order * config.INVENTORY_RESTOCK_SCALE
-    if qty > config.INVENTORY_MIN_ORDER_QTY:
-        state.order_queue.append(qty)
+        level = min(state.inventory_levels[i] + arrived, 1.0)
 
-    sold = min(level, state.demand_today)
-    state.unmet_demand = state.demand_today - sold
-    state.inventory_order = order
-    state.inventory_level = float(np.clip(level - sold, 0.0, 1.0))
+        action = actions.get(agent)
+        order = (
+            0.0
+            if action is None
+            else float(
+                np.clip(
+                    np.asarray(action).flatten()[0],
+                    config.INVENTORY_ACTION_LOW,
+                    config.INVENTORY_ACTION_HIGH,
+                )
+            )
+        )
+        qty = order * config.INVENTORY_RESTOCK_SCALE
+        if qty > config.INVENTORY_MIN_ORDER_QTY:
+            state.order_queue.append((i, qty))
+
+        sold = min(level, state.demand_today[i])
+        state.unmet_demand[i] = state.demand_today[i] - sold
+        state.inventory_order[i] = order
+        state.inventory_levels[i] = float(np.clip(level - sold, 0.0, 1.0))
+    state.cargo = [c for c in state.cargo if c.arrival_tick > state.tick]
 
 
 def slot_deadline(slot: int, max_steps: int) -> float:
@@ -139,14 +152,12 @@ def _vehicle_free(state: GlobalState, i: int) -> bool:
     return state.tick >= state.vehicles[i].busy_until
 
 
-def expected_lead_time(state: GlobalState) -> int:
-    """Ticks until an order placed now would arrive: transit of the nearest
-    free vehicle, or wait-until-free + transit if all are busy. Ignores slot
-    scheduling and queue backlog — an estimate for the demand forecast horizon."""
-    eta = min(
-        max(0, v.busy_until - state.tick) + int(np.ceil(v.route_transit))
-        for v in state.vehicles
-    )
+def expected_lead_time(state: GlobalState, instance: int) -> int:
+    """Ticks until an order placed now would arrive at this retailer: transit
+    to it plus the soonest-free vehicle's wait. Ignores slot scheduling and
+    queue backlog — an estimate for the demand forecast horizon."""
+    wait = min(max(0, v.busy_until - state.tick) for v in state.vehicles)
+    eta = wait + int(np.ceil(state.retailer_transit[instance]))
     return max(1, eta)
 
 
@@ -165,18 +176,22 @@ def _apply_delivery_action(
 
 
 def _dispatch_orders(state: GlobalState) -> None:
-    """Nearest free vehicle takes the queue head (paper Alg 5 line 15: distance
-    heuristic); its chosen slot schedules the trip. Departure waits for the slot
-    window; delay/SLA/emissions accrue on the dispatch tick (per trip, not per
-    tick — an idle vehicle neither drives nor emits)."""
+    """First free vehicle takes the queue head and drives to the ordering
+    retailer (all vehicles depart from the same source, so the paper's distance
+    heuristic — Alg 5 line 15 — reduces to first-free); its chosen slot
+    schedules the trip. Departure waits for the slot window; delay/SLA/emissions
+    accrue on the dispatch tick (per trip, not per tick — an idle vehicle
+    neither drives nor emits)."""
     while state.order_queue:
         free = [i for i in range(len(state.vehicles)) if _vehicle_free(state, i)]
         if not free:
             return
-        i = min(free, key=lambda j: state.vehicles[j].route_transit)
+        i = free[0]
         vehicle = state.vehicles[i]
-        qty = state.order_queue.pop(0)
+        instance, qty = state.order_queue.pop(0)
 
+        vehicle.route_transit = state.retailer_transit[instance]
+        vehicle.route_emissions = state.retailer_emissions[instance]
         departure = max(
             state.tick, int(np.ceil(slot_start(vehicle.chosen_slot, state.max_steps)))
         )
@@ -188,7 +203,13 @@ def _dispatch_orders(state: GlobalState) -> None:
         vehicle.sla_violated = arrival > deadline
         vehicle.emissions = vehicle.route_emissions
         state.cargo.append(
-            Cargo(vehicle=i, departure_tick=departure, arrival_tick=arrival, qty=qty)
+            Cargo(
+                vehicle=i,
+                instance=instance,
+                departure_tick=departure,
+                arrival_tick=arrival,
+                qty=qty,
+            )
         )
 
 
@@ -233,22 +254,20 @@ def _advance_calendar(state: GlobalState) -> None:
     state.demand_mean = state.demand_shock_mult * demand.demand_mean(
         state.day_of_year, state.weekday, state.ambient_weather, state.event_multiplier
     )
-    state.demand_today = state.demand_shock_mult * demand.sample_demand(
-        state.inventory_rng,
-        state.day_of_year,
-        state.weekday,
-        state.ambient_weather,
-        state.event_multiplier,
-    )
-    demand.push_history(
-        state.history,
-        state.day_of_year,
-        state.weekday,
-        state.ambient_weather,
-        state.event_multiplier,
-        state.demand_mean,
-        state.demand_today,
-    )
+    state.demand_today = [
+        state.demand_mean * demand.demand_noise(state.inventory_rng)
+        for _ in range(config.N_INVENTORY_INSTANCES)
+    ]
+    for history, today in zip(state.histories, state.demand_today, strict=True):
+        demand.push_history(
+            history,
+            state.day_of_year,
+            state.weekday,
+            state.ambient_weather,
+            state.event_multiplier,
+            state.demand_mean,
+            today,
+        )
 
 
 def _advance_cargo(state: GlobalState) -> None:
@@ -256,12 +275,12 @@ def _advance_cargo(state: GlobalState) -> None:
     risk (single-shipment proxy until multi-instance). Queued cargo and cargo
     waiting for its slot window sit in cold storage and do not decay."""
     decay = config.TRANSIT_SPOILAGE_RATE * state.shipment.spoilage_risk
-    state.transit_loss = 0.0
+    state.transit_loss = [0.0] * config.N_INVENTORY_INSTANCES
     for c in state.cargo:
         if c.departure_tick <= state.tick < c.arrival_tick:
             lost = c.qty * decay
             c.qty -= lost
-            state.transit_loss += lost
+            state.transit_loss[c.instance] += lost
 
 
 def _maybe_sample_disruption(state: GlobalState) -> None:
@@ -288,11 +307,13 @@ def _build_infos(
             "y_pred": state.spoilage_prediction,
             "ground_truth_label": state.shipment.ground_truth_label,
         },
-        "inventory": {
-            "inventory_level": state.inventory_level,
-            "transit_loss": state.transit_loss,
-        },
     }
+    for i in range(config.N_INVENTORY_INSTANCES):
+        infos[f"inventory_{i}"] = {
+            "inventory_level": state.inventory_levels[i],
+            "transit_loss": state.transit_loss[i],
+            "conflict": state.inventory_conflict[i],
+        }
     for i, vehicle in enumerate(state.vehicles):
         infos[f"delivery_{i}"] = {
             "delay": vehicle.delay,

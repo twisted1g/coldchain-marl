@@ -328,6 +328,41 @@ class DQNAgent:
         self._qnet.load_state_dict(torch.load(path / "qnet.pt", weights_only=True))
 
 
+class SharedHandle:
+    """Per-instance adapter over one shared agent (paper Alg 4: symmetric
+    instances, one policy). All handles feed the shared replay buffer; index 0
+    updates and persists so one env step triggers one gradient step."""
+
+    def __init__(self, agent: Agent, index: int) -> None:
+        self._agent = agent
+        self._index = index
+
+    def act(self, obs: np.ndarray, *, explore: bool) -> Action:
+        return self._agent.act(obs, explore=explore)
+
+    def observe(
+        self,
+        obs: np.ndarray,
+        action: Action,
+        reward: float,
+        next_obs: np.ndarray,
+        terminated: bool,
+        truncated: bool,
+    ) -> None:
+        self._agent.observe(obs, action, reward, next_obs, terminated, truncated)
+
+    def update(self) -> dict[str, float]:
+        return self._agent.update() if self._index == 0 else {}
+
+    def save(self, path: Path) -> None:
+        if self._index == 0:
+            self._agent.save(path)
+
+    def load(self, path: Path) -> None:
+        if self._index == 0:
+            self._agent.load(path)
+
+
 class SpoilageAgent:
     """Spoilage agent (paper Alg 3): frozen GraphSAGE encoder feeding a DDPG head."""
 
