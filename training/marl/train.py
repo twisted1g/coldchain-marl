@@ -70,6 +70,12 @@ def _parse_args() -> argparse.Namespace:
         default=1.0,
         help="probability an episode replays a scenario (rest stay clean)",
     )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=SEED,
+        help="torch/numpy init seed (retry a collapsed run; env seeds unchanged)",
+    )
     return p.parse_args()
 
 
@@ -77,8 +83,8 @@ def main() -> None:
     args = _parse_args()
     learners = args.agents
     forecaster = FORECASTER_PATH if args.forecaster else None
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     ARTIFACTS.mkdir(exist_ok=True)
     MODULES_DIR.mkdir(parents=True, exist_ok=True)
