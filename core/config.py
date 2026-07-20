@@ -38,6 +38,9 @@ INVENTORY_INIT_LEVEL: Final[float] = 1.0
 INVENTORY_DEMAND_MEAN: Final[float] = 0.15
 INVENTORY_RESTOCK_SCALE: Final[float] = 1.0
 INVENTORY_MIN_ORDER_QTY: Final[float] = 0.05
+# Scales restock delivery lead time so orders arrive+sell inside the 20-step
+# episode (raw transit ~5 left inventory boundary-dominated). ~0.4 -> lead ~2.
+RESTOCK_TRANSIT_SCALE: Final[float] = 0.4
 TRANSIT_SPOILAGE_RATE: Final[float] = 0.05
 INVENTORY_RNG_OFFSET: Final[int] = 90_001
 

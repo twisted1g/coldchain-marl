@@ -35,8 +35,15 @@ SPOILAGE_INSPECTION_WEIGHT = 0.2
 INVENTORY_SPOILAGE_WEIGHT = 5.0
 INVENTORY_HOLDING_WEIGHT = 1.0
 INVENTORY_EMISSIONS_WEIGHT = 1.0
-INVENTORY_STOCKOUT_WEIGHT = 5.0
-INVENTORY_CONFLICT_PENALTY = 5.0
+# A delivery trip's raw carbon (~50) dwarfs holding/spoilage (~0.1-0.5); the
+# self-normalising Pareto is dominated by its largest term, so unscaled Et would
+# make every arrival a ~50 cost spike and relocate the order=0 collapse to the
+# arrival tick. Scale the delivery carbon onto the inventory-cost range instead.
+INVENTORY_EMISSIONS_SCALE = 0.01
+# Additive shortage penalty (outside the Pareto sum) on the unmet-demand
+# fraction in [0,1]; ~1.0 keeps it on the scale of the Pareto cost (~0.1-0.3)
+# so ordering-to-demand pays without over-ordering into overstock spoilage.
+INVENTORY_STOCKOUT_WEIGHT = 1.0
 
 DELIVERY_DELAY_WEIGHT = 1.0
 DELIVERY_SLA_WEIGHT = 5.0
@@ -251,28 +258,38 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         """Paper Alg 4 reward (Lspoil, H, E) plus a stockout term: the box omits
         it, but Section 4.1 tasks the agent with "match demand" / "anticipate
         shortages"; without it order=0 is optimal and the forecast is dead.
-        Supply contention (line 9) adds the coordination penalty ρ."""
+        Supply contention (line 9) is resolved by the "reassign" branch — the
+        order queue defers a contended order to the next free vehicle — so no
+        explicit coordination penalty ρ is added on top."""
         s = self._state
         level = s.inventory_levels[i]
+        # Post-sale level is the leftover that did not meet demand, i.e. the
+        # overstock that spoils (Alg 4 line 15, "overstocked perishables").
         spoilage_loss = level * s.shipment.spoilage_risk
-        emissions = s.inventory_order[i]
-        conflict = INVENTORY_CONFLICT_PENALTY if s.inventory_conflict[i] else 0.0
-        cost = (
-            _dynamic_pareto(
-                [
-                    (INVENTORY_SPOILAGE_WEIGHT, spoilage_loss),
-                    (INVENTORY_HOLDING_WEIGHT, level),
-                    (INVENTORY_EMISSIONS_WEIGHT, emissions),
-                    (INVENTORY_STOCKOUT_WEIGHT, s.unmet_demand[i]),
-                ]
-            )
-            + conflict
+        # Et = emissions of the delivery that arrived this tick (Alg 4 line 16),
+        # not the order magnitude at order time — the latter penalised ordering
+        # instantly while its payoff lagged by the lead time, so order=0 won.
+        emissions = s.inventory_arrival_emissions[i] * INVENTORY_EMISSIONS_SCALE
+        # Alg 4 box: 3-term Pareto with dynamic weights over ctx = [Lspoil, H, E].
+        sustainability = _dynamic_pareto(
+            [
+                (INVENTORY_SPOILAGE_WEIGHT, spoilage_loss),
+                (INVENTORY_HOLDING_WEIGHT, level),
+                (INVENTORY_EMISSIONS_WEIGHT, emissions),
+            ]
         )
+        # Shortage stays outside the Pareto sum (like rho): Section 4.1 tasks the
+        # agent to "match demand" / "anticipate shortages", but the Alg 4 box
+        # omits the term. Inside the self-normalising Pareto it is diluted to a
+        # convex-combination weight and cannot outweigh holding; as an additive
+        # penalty its gradient survives and ordering-to-demand becomes optimal.
+        shortage = s.unmet_demand[i] / max(s.demand_today[i], 1e-6)
+        cost = sustainability + INVENTORY_STOCKOUT_WEIGHT * shortage
         return -cost, {
             "inventory_cost": cost,
+            "order": s.inventory_order[i],
             "unmet_demand": s.unmet_demand[i],
             "inventory_level": level,
-            "conflict": float(s.inventory_conflict[i]),
         }
 
     def _delivery_reward(self, i: int) -> tuple[float, dict[str, float]]:

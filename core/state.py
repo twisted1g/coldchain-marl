@@ -65,6 +65,7 @@ class Cargo:
     departure_tick: int
     arrival_tick: int
     qty: float
+    emissions: float
 
 
 @dataclass(slots=True)
@@ -82,7 +83,7 @@ class GlobalState:
     inventory_rng: np.random.Generator
     unmet_demand: list[float]
     inventory_order: list[float]
-    inventory_conflict: list[bool]
+    inventory_arrival_emissions: list[float]
     order_queue: list[tuple[int, float]]
     cargo: list[Cargo]
     transit_loss: list[float]
@@ -174,7 +175,16 @@ def init_state(
         )
 
     retailers = sink_nodes(graph)
-    retailer_costs = [_route_cost(graph, source, r) for r in retailers]
+    # Restock lead time (transit) is scaled down so an order can arrive AND be
+    # sold within the paper's 10-20 step episode: at raw transit ~5 in a 20-step
+    # horizon, ~5 ticks are pipeline-fill stockout and the last ~5 ticks of
+    # orders arrive after the episode ends, leaving inventory boundary-dominated.
+    # Emissions (carbon) are unscaled — this models faster restock vehicles, not
+    # relocated retailers. Only inventory/delivery read retailer_transit.
+    retailer_costs = [
+        (t * config.RESTOCK_TRANSIT_SCALE, e)
+        for t, e in (_route_cost(graph, source, r) for r in retailers)
+    ]
 
     return GlobalState(
         tick=0,
@@ -190,7 +200,7 @@ def init_state(
         inventory_rng=inventory_rng,
         unmet_demand=[0.0] * config.N_INVENTORY_INSTANCES,
         inventory_order=[0.0] * config.N_INVENTORY_INSTANCES,
-        inventory_conflict=[False] * config.N_INVENTORY_INSTANCES,
+        inventory_arrival_emissions=[0.0] * config.N_INVENTORY_INSTANCES,
         order_queue=[],
         cargo=[],
         transit_loss=[0.0] * config.N_INVENTORY_INSTANCES,

@@ -34,12 +34,11 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
 
     buffer = IntentionBuffer()
     buffer.declare_all(actions)
-    free = sum(1 for i in range(len(state.vehicles)) if _vehicle_free(state, i))
-    conflicts = buffer.detect(free_vehicles=free)
+    conflicts = buffer.detect()
 
     _apply_temperature_action(state, actions.get("temperature"))
     _apply_routing_action(state, actions.get("routing"))
-    _apply_inventory_action(state, actions, conflicts)
+    _apply_inventory_action(state, actions)
     _apply_delivery_action(state, actions, conflicts)
     _apply_spoilage_action(state, actions.get("spoilage"))
 
@@ -102,17 +101,19 @@ def _apply_temperature_action(state: GlobalState, action: Any) -> None:
     )
 
 
-def _apply_inventory_action(
-    state: GlobalState, actions: dict[str, Any], conflicts: dict[str, bool]
-) -> None:
+def _apply_inventory_action(state: GlobalState, actions: dict[str, Any]) -> None:
     for i in range(config.N_INVENTORY_INSTANCES):
         agent = f"inventory_{i}"
-        state.inventory_conflict[i] = conflicts.get(agent, False)
-        arrived = sum(
-            c.qty
+        arrivals = [
+            c
             for c in state.cargo
             if c.instance == i and c.arrival_tick <= state.tick
-        )
+        ]
+        arrived = sum(c.qty for c in arrivals)
+        # Emissions Et are charged on the delivery that lands the goods (Alg 4
+        # line 16, "from delivery"), not on the order action: the cost lands
+        # with the benefit, so ordering carries no instant penalty.
+        state.inventory_arrival_emissions[i] = sum(c.emissions for c in arrivals)
         level = min(state.inventory_levels[i] + arrived, 1.0)
 
         action = actions.get(agent)
@@ -209,6 +210,7 @@ def _dispatch_orders(state: GlobalState) -> None:
                 departure_tick=departure,
                 arrival_tick=arrival,
                 qty=qty,
+                emissions=vehicle.route_emissions,
             )
         )
 
@@ -312,7 +314,6 @@ def _build_infos(
         infos[f"inventory_{i}"] = {
             "inventory_level": state.inventory_levels[i],
             "transit_loss": state.transit_loss[i],
-            "conflict": state.inventory_conflict[i],
         }
     for i, vehicle in enumerate(state.vehicles):
         infos[f"delivery_{i}"] = {
