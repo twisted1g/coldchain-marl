@@ -20,17 +20,9 @@ from typing import Any
 import numpy as np
 import torch
 
-from core.config import DELIVERY_AGENTS, N_DELIVERY_WINDOWS
-from core.dynamics import slot_deadline
-from core.state import GlobalState
-from env.training_env import (
-    DELIVERY_CONFLICT_PENALTY,
-    DELIVERY_DELAY_WEIGHT,
-    DELIVERY_SLA_WEIGHT,
-    ColdChainTrainingEnv,
-)
+from env.training_env import ColdChainTrainingEnv
 from llm.client import LLMConfig, OpenAICompatClient
-from llm.negotiation import NegotiationError, SlotParty, negotiate
+from llm.mediation import SlotMediator
 from training.config import FORECASTER_PATH, SEED, env_config, load_agents
 
 NEGO_SEED = 800_000
@@ -38,90 +30,6 @@ DEFAULT_EPISODES = 30
 DEFAULT_ROUNDS = 3
 
 ARM_METRICS = ("conflict", "slot_cost", "delay", "sla_violated")
-
-
-class SlotMediator:
-    """Detects delivery slot collisions and runs the Alg 6 protocol on them.
-
-    Identical conflicts (same claims, costs, and free slots) are resolved
-    once and cached — negotiation is deterministic given its inputs.
-    """
-
-    def __init__(self, client: OpenAICompatClient | None, max_rounds: int) -> None:
-        self._client = client
-        self._max_rounds = max_rounds
-        self._cache: dict[Any, Any] = {}
-        self.events = 0
-        self.agreements = 0
-        self.failures = 0
-        self.errors = 0
-        self.cache_hits = 0
-        self.negotiations = 0
-        self.rounds: list[int] = []
-
-    def resolve(self, actions: dict[str, Any], state: GlobalState) -> dict[str, Any]:
-        claims = {
-            a: int(actions[a]) % N_DELIVERY_WINDOWS
-            for a in DELIVERY_AGENTS
-            if a in actions
-        }
-        by_slot: dict[int, list[str]] = defaultdict(list)
-        for agent, slot in claims.items():
-            by_slot[slot].append(agent)
-        for slot, group in by_slot.items():
-            if len(group) < 2:
-                continue
-            self.events += 1
-            forbidden = frozenset(s for s in by_slot if s != slot)
-            parties = [self._party(a, claims[a], state) for a in group]
-            agreement = self._negotiate_cached(parties, forbidden)
-            if agreement is None:
-                self.failures += 1
-                continue
-            self.agreements += 1
-            self.rounds.append(agreement.rounds)
-            for name, agreed in agreement.assignment.items():
-                actions[name] = agreed
-        return actions
-
-    def _party(self, name: str, slot: int, state: GlobalState) -> SlotParty:
-        vehicle = state.vehicles[int(name.rsplit("_", 1)[1])]
-        costs = tuple(
-            _slot_cost(vehicle.route_transit, s, state.max_steps)
-            for s in range(N_DELIVERY_WINDOWS)
-        )
-        return SlotParty(name, slot, costs, DELIVERY_CONFLICT_PENALTY)
-
-    def _negotiate_cached(self, parties: list[SlotParty], forbidden: frozenset[int]):
-        key = (
-            tuple(
-                sorted(
-                    (p.name, p.initial_slot, tuple(round(c, 2) for c in p.slot_costs))
-                    for p in parties
-                )
-            ),
-            forbidden,
-        )
-        if key in self._cache:
-            self.cache_hits += 1
-            return self._cache[key]
-        self.negotiations += 1
-        try:
-            agreement = negotiate(parties, self._client, self._max_rounds, forbidden)
-        except NegotiationError:
-            self.errors += 1
-            agreement = None
-        self._cache[key] = agreement
-        return agreement
-
-
-def _slot_cost(transit: float, slot: int, max_steps: int) -> float:
-    """Conflict-free part of the env's slot_cost (core dynamics deadline)."""
-    deadline = slot_deadline(slot, max_steps)
-    delay = max(0.0, transit - deadline)
-    return DELIVERY_DELAY_WEIGHT * delay + DELIVERY_SLA_WEIGHT * float(
-        transit > deadline
-    )
 
 
 def _run_arm(
