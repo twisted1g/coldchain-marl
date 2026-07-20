@@ -76,6 +76,12 @@ def _parse_args() -> argparse.Namespace:
         default=SEED,
         help="torch/numpy init seed (retry a collapsed run; env seeds unchanged)",
     )
+    p.add_argument(
+        "--iters",
+        type=int,
+        default=NUM_ITERATIONS,
+        help="training iterations (default full run; lower for a quick smoke)",
+    )
     return p.parse_args()
 
 
@@ -108,7 +114,7 @@ def main() -> None:
         fieldnames += [f"return_{a}", f"{METRIC[a][0]}_{a}"]
 
     rows: list[dict[str, float]] = []
-    for it in range(1, NUM_ITERATIONS + 1):
+    for it in range(1, args.iters + 1):
         collect_and_learn(train_env, agents, EPISODES_PER_ITERATION)
         row: dict[str, float] = {"iteration": it}
         parts = []
