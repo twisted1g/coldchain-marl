@@ -32,9 +32,21 @@ TEMPERATURE_ACTION_HIGH_C: Final[float] = 30.0
 INVENTORY_ACTION_LOW: Final[float] = 0.0
 INVENTORY_ACTION_HIGH: Final[float] = 1.0
 
-INVENTORY_INIT_LEVEL: Final[float] = 1.0
+N_INVENTORY_INSTANCES: Final[int] = N_RETAILERS
+
+# Retailers start near-empty so restocking is the agent's job: a full shelf
+# (1.0) buffers ~4 ticks of demand and flattens the cost landscape until even
+# never-order sits within ~5% of optimal, so no learned policy can separate
+# from a random baseline. At 0.3 restock is essential — the optimal policy
+# beats never-order ~38% and random ~26% (vs +16%/+12% at 1.0).
+INVENTORY_INIT_LEVEL: Final[float] = 0.3
 INVENTORY_DEMAND_MEAN: Final[float] = 0.15
-INVENTORY_RESTOCK_SCALE: Final[float] = 0.25
+INVENTORY_RESTOCK_SCALE: Final[float] = 1.0
+INVENTORY_MIN_ORDER_QTY: Final[float] = 0.05
+# Scales restock delivery lead time so orders arrive+sell inside the 20-step
+# episode (raw transit ~5 left inventory boundary-dominated). ~0.4 -> lead ~2.
+RESTOCK_TRANSIT_SCALE: Final[float] = 0.4
+TRANSIT_SPOILAGE_RATE: Final[float] = 0.05
 INVENTORY_RNG_OFFSET: Final[int] = 90_001
 
 DAYS_PER_YEAR: Final[int] = 365
@@ -140,11 +152,20 @@ SPOILAGE_OBS_FIELDS: Final[tuple[str, ...]] = tuple(
     for name in ("temperature", "humidity", "delay", "fruit_type")
 )
 
+# Paper Alg 4 state = [stock level, demand forecast, shelf life, carbon]; we add
+# on_order (pipeline) so the policy sees its inventory position. zone_energy_usage
+# and peer_stock were shipment-global noise irrelevant to a per-instance order
+# decision — the policy latched onto them and learned harmful state-dependence
+# (ordered more when it should not), losing to a random baseline. Dropped.
 INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (
     "inventory_level",
+    "on_order",
     "demand_forecast",
     "shelf_life",
-    "zone_energy_usage",
+)
+
+INVENTORY_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"inventory_{i}" for i in range(N_INVENTORY_INSTANCES)
 )
 
 DELIVERY_OBS_FIELDS: Final[tuple[str, ...]] = (
@@ -164,6 +185,6 @@ OBS_FIELDS_BY_AGENT: Final[dict[str, tuple[str, ...]]] = {
     "routing": ROUTING_OBS_FIELDS,
     "temperature": TEMPERATURE_OBS_FIELDS,
     "spoilage": SPOILAGE_OBS_FIELDS,
-    "inventory": INVENTORY_OBS_FIELDS,
+    **dict.fromkeys(INVENTORY_AGENTS, INVENTORY_OBS_FIELDS),
     **dict.fromkeys(DELIVERY_AGENTS, DELIVERY_OBS_FIELDS),
 }

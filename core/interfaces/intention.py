@@ -6,7 +6,9 @@ from core import config
 
 
 class IntentionBuffer:
-    """Shared intention buffer B (paper Alg 1-5): declare, detect conflicts (ρ)."""
+    """Shared intention buffer B (paper Alg 5): declare, detect delivery-slot
+    conflicts. Inventory supply contention is left to the order queue's
+    reassignment (Alg 4 line 10), so no ρ penalty is raised here."""
 
     def __init__(self) -> None:
         self._intentions: dict[str, Any] = {}

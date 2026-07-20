@@ -39,6 +39,11 @@ def demand_mean(
     )
 
 
+def demand_noise(rng: np.random.Generator) -> float:
+    sigma = config.DEMAND_NOISE_SIGMA
+    return float(rng.lognormal(mean=-0.5 * sigma**2, sigma=sigma))
+
+
 def sample_demand(
     rng: np.random.Generator,
     day_of_year: int,
@@ -46,9 +51,7 @@ def sample_demand(
     weather: Weather,
     event_mult: float,
 ) -> float:
-    sigma = config.DEMAND_NOISE_SIGMA
-    noise = float(rng.lognormal(mean=-0.5 * sigma**2, sigma=sigma))
-    return demand_mean(day_of_year, weekday, weather, event_mult) * noise
+    return demand_mean(day_of_year, weekday, weather, event_mult) * demand_noise(rng)
 
 
 def advance_event(

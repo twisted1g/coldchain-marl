@@ -70,6 +70,18 @@ def _parse_args() -> argparse.Namespace:
         default=1.0,
         help="probability an episode replays a scenario (rest stay clean)",
     )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=SEED,
+        help="torch/numpy init seed (retry a collapsed run; env seeds unchanged)",
+    )
+    p.add_argument(
+        "--iters",
+        type=int,
+        default=NUM_ITERATIONS,
+        help="training iterations (default full run; lower for a quick smoke)",
+    )
     return p.parse_args()
 
 
@@ -77,8 +89,8 @@ def main() -> None:
     args = _parse_args()
     learners = args.agents
     forecaster = FORECASTER_PATH if args.forecaster else None
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     ARTIFACTS.mkdir(exist_ok=True)
     MODULES_DIR.mkdir(parents=True, exist_ok=True)
@@ -102,7 +114,7 @@ def main() -> None:
         fieldnames += [f"return_{a}", f"{METRIC[a][0]}_{a}"]
 
     rows: list[dict[str, float]] = []
-    for it in range(1, NUM_ITERATIONS + 1):
+    for it in range(1, args.iters + 1):
         collect_and_learn(train_env, agents, EPISODES_PER_ITERATION)
         row: dict[str, float] = {"iteration": it}
         parts = []

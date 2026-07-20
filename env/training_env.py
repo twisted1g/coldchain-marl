@@ -5,7 +5,8 @@ from functools import partial
 from typing import Any
 
 from core import config as core_config
-from core.config import DELIVERY_AGENTS, FruitKey
+from core.config import DELIVERY_AGENTS, INVENTORY_AGENTS, FruitKey
+from core.dynamics import expected_lead_time
 from core.interfaces.observations import all_obs
 from core.world.fruits import get_params
 from core.world.graph_features import node_delay
@@ -34,6 +35,17 @@ SPOILAGE_INSPECTION_WEIGHT = 0.2
 INVENTORY_SPOILAGE_WEIGHT = 5.0
 INVENTORY_HOLDING_WEIGHT = 1.0
 INVENTORY_EMISSIONS_WEIGHT = 1.0
+# A delivery trip's raw carbon (~50) dwarfs holding/spoilage (~0.1-0.5); the
+# self-normalising Pareto is dominated by its largest term, so unscaled Et would
+# make every arrival a ~50 cost spike and relocate the order=0 collapse to the
+# arrival tick. Scale the delivery carbon onto the inventory-cost range instead.
+INVENTORY_EMISSIONS_SCALE = 0.01
+# Additive shortage penalty (outside the Pareto sum) on the unmet-demand
+# fraction in [0,1]. At 1.0 the shortage cliff is steep and asymmetric (sharp
+# below demand, gentle above), so DDPG settles on the safe over-ordering side
+# (~0.78 vs the ~0.4 optimum) and ties random. 0.5 softens the cliff: optimum
+# ~0.35, and the cost-optimal policy beats random by ~13% (vs ~6% at 1.0).
+INVENTORY_STOCKOUT_WEIGHT = 0.5
 
 DELIVERY_DELAY_WEIGHT = 1.0
 DELIVERY_SLA_WEIGHT = 5.0
@@ -103,7 +115,10 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             "temperature": self._temperature_reward,
             "routing": self._routing_reward,
             "spoilage": self._spoilage_reward,
-            "inventory": self._inventory_reward,
+            **{
+                name: partial(self._inventory_reward, i)
+                for i, name in enumerate(INVENTORY_AGENTS)
+            },
             **{
                 name: partial(self._delivery_reward, i)
                 for i, name in enumerate(DELIVERY_AGENTS)
@@ -132,18 +147,22 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         }
 
     def _apply_forecast(self, obs: dict[str, Any]) -> dict[str, Any]:
-        """Forecast tomorrow's demand from the history window; rebuild obs so
-        agents act on the updated ``demand_forecast``."""
+        """Forecast demand for each instance's order-arrival day (lead time
+        ahead) from its history window; rebuild obs so agents act on the
+        updated ``demand_forecast``. An order placed now rides a vehicle, so
+        the day that matters is the expected arrival day, not tomorrow."""
         if self._forecaster is None:
             return obs
         state = self._state
-        state.demand_forecast = self._predict_next(
-            self._forecaster,
-            state.history,
-            (state.day_of_year + 1) % core_config.DAYS_PER_YEAR,
-            (state.weekday + 1) % core_config.DAYS_PER_WEEK,
-            state.ambient_weather,
-        )
+        for i, history in enumerate(state.histories):
+            horizon = expected_lead_time(state, i)
+            state.demand_forecast[i] = self._predict_next(
+                self._forecaster,
+                history,
+                (state.day_of_year + horizon) % core_config.DAYS_PER_YEAR,
+                (state.weekday + horizon) % core_config.DAYS_PER_WEEK,
+                state.ambient_weather,
+            )
         return all_obs(state)
 
     def _pick_scenario(self, options: dict[str, Any] | None):
@@ -237,22 +256,42 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             "spoilage_label": label,
         }
 
-    def _inventory_reward(self) -> tuple[float, dict[str, float]]:
+    def _inventory_reward(self, i: int) -> tuple[float, dict[str, float]]:
+        """Paper Alg 4 reward (Lspoil, H, E) plus a stockout term: the box omits
+        it, but Section 4.1 tasks the agent with "match demand" / "anticipate
+        shortages"; without it order=0 is optimal and the forecast is dead.
+        Supply contention (line 9) is resolved by the "reassign" branch — the
+        order queue defers a contended order to the next free vehicle — so no
+        explicit coordination penalty ρ is added on top."""
         s = self._state
-        spoilage_loss = s.inventory_level * s.shipment.spoilage_risk
-        holding = s.inventory_level
-        emissions = s.inventory_order
-        cost = _dynamic_pareto(
+        level = s.inventory_levels[i]
+        # Post-sale level is the leftover that did not meet demand, i.e. the
+        # overstock that spoils (Alg 4 line 15, "overstocked perishables").
+        spoilage_loss = level * s.shipment.spoilage_risk
+        # Et = emissions of the delivery that arrived this tick (Alg 4 line 16),
+        # not the order magnitude at order time — the latter penalised ordering
+        # instantly while its payoff lagged by the lead time, so order=0 won.
+        emissions = s.inventory_arrival_emissions[i] * INVENTORY_EMISSIONS_SCALE
+        # Alg 4 box: 3-term Pareto with dynamic weights over ctx = [Lspoil, H, E].
+        sustainability = _dynamic_pareto(
             [
                 (INVENTORY_SPOILAGE_WEIGHT, spoilage_loss),
-                (INVENTORY_HOLDING_WEIGHT, holding),
+                (INVENTORY_HOLDING_WEIGHT, level),
                 (INVENTORY_EMISSIONS_WEIGHT, emissions),
             ]
         )
+        # Shortage stays outside the Pareto sum (like rho): Section 4.1 tasks the
+        # agent to "match demand" / "anticipate shortages", but the Alg 4 box
+        # omits the term. Inside the self-normalising Pareto it is diluted to a
+        # convex-combination weight and cannot outweigh holding; as an additive
+        # penalty its gradient survives and ordering-to-demand becomes optimal.
+        shortage = s.unmet_demand[i] / max(s.demand_today[i], 1e-6)
+        cost = sustainability + INVENTORY_STOCKOUT_WEIGHT * shortage
         return -cost, {
             "inventory_cost": cost,
-            "unmet_demand": s.unmet_demand,
-            "inventory_level": s.inventory_level,
+            "order": s.inventory_order[i],
+            "unmet_demand": s.unmet_demand[i],
+            "inventory_level": level,
         }
 
     def _delivery_reward(self, i: int) -> tuple[float, dict[str, float]]:

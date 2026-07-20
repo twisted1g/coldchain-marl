@@ -49,10 +49,23 @@ class VehicleState:
     route_emissions: float
     sla_window_ticks: int
     chosen_slot: int
+    busy_until: int
     delay: float
     emissions: float
     sla_violated: bool
     conflict: bool
+
+
+@dataclass(slots=True)
+class Cargo:
+    """A restock order riding on a vehicle (return trip is instant — deferred)."""
+
+    vehicle: int
+    instance: int
+    departure_tick: int
+    arrival_tick: int
+    qty: float
+    emissions: float
 
 
 @dataclass(slots=True)
@@ -66,19 +79,25 @@ class GlobalState:
     ambient_weather: Weather
     ambient_temp_c: float
     ambient_humidity: float
-    inventory_level: float
+    inventory_levels: list[float]
     inventory_rng: np.random.Generator
-    unmet_demand: float
-    inventory_order: float
+    unmet_demand: list[float]
+    inventory_order: list[float]
+    inventory_arrival_emissions: list[float]
+    order_queue: list[tuple[int, float]]
+    cargo: list[Cargo]
+    transit_loss: list[float]
+    retailer_transit: list[float]
+    retailer_emissions: list[float]
     demand_mean: float
     day_of_year: int
     weekday: int
     event_days_left: int
     event_multiplier: float
-    demand_today: float
+    demand_today: list[float]
     demand_shock_mult: float
-    history: demand.DemandSeries
-    demand_forecast: float
+    histories: list[demand.DemandSeries]
+    demand_forecast: list[float]
     energy_usage: float
     fault_signals: int
     route_travel_time: float
@@ -138,22 +157,34 @@ def init_state(
         (weekday - 1) % config.DAYS_PER_WEEK,
         config.DEMAND_HISTORY_DAYS,
     )
+    histories = [history] + [
+        _redraw_demand(history, inventory_rng)
+        for _ in range(1, config.N_INVENTORY_INSTANCES)
+    ]
     event_days_left, event_multiplier = demand.advance_event(
         inventory_rng, event_days_left, event_multiplier
     )
     mean_today = demand.demand_mean(day_of_year, weekday, weather, event_multiplier)
-    demand_today = demand.sample_demand(
-        inventory_rng, day_of_year, weekday, weather, event_multiplier
-    )
-    demand.push_history(
-        history,
-        day_of_year,
-        weekday,
-        weather,
-        event_multiplier,
-        mean_today,
-        demand_today,
-    )
+    demand_today = [
+        mean_today * demand.demand_noise(inventory_rng)
+        for _ in range(config.N_INVENTORY_INSTANCES)
+    ]
+    for h, d in zip(histories, demand_today, strict=True):
+        demand.push_history(
+            h, day_of_year, weekday, weather, event_multiplier, mean_today, d
+        )
+
+    retailers = sink_nodes(graph)
+    # Restock lead time (transit) is scaled down so an order can arrive AND be
+    # sold within the paper's 10-20 step episode: at raw transit ~5 in a 20-step
+    # horizon, ~5 ticks are pipeline-fill stockout and the last ~5 ticks of
+    # orders arrive after the episode ends, leaving inventory boundary-dominated.
+    # Emissions (carbon) are unscaled — this models faster restock vehicles, not
+    # relocated retailers. Only inventory/delivery read retailer_transit.
+    retailer_costs = [
+        (t * config.RESTOCK_TRANSIT_SCALE, e)
+        for t, e in (_route_cost(graph, source, r) for r in retailers)
+    ]
 
     return GlobalState(
         tick=0,
@@ -165,10 +196,16 @@ def init_state(
         ambient_weather=weather,
         ambient_temp_c=ambient_temp,
         ambient_humidity=ambient_humidity,
-        inventory_level=config.INVENTORY_INIT_LEVEL,
+        inventory_levels=[config.INVENTORY_INIT_LEVEL] * config.N_INVENTORY_INSTANCES,
         inventory_rng=inventory_rng,
-        unmet_demand=0.0,
-        inventory_order=0.0,
+        unmet_demand=[0.0] * config.N_INVENTORY_INSTANCES,
+        inventory_order=[0.0] * config.N_INVENTORY_INSTANCES,
+        inventory_arrival_emissions=[0.0] * config.N_INVENTORY_INSTANCES,
+        order_queue=[],
+        cargo=[],
+        transit_loss=[0.0] * config.N_INVENTORY_INSTANCES,
+        retailer_transit=[t for t, _ in retailer_costs],
+        retailer_emissions=[e for _, e in retailer_costs],
         demand_mean=mean_today,
         day_of_year=day_of_year,
         weekday=weekday,
@@ -176,23 +213,42 @@ def init_state(
         event_multiplier=event_multiplier,
         demand_today=demand_today,
         demand_shock_mult=1.0,
-        history=history,
-        demand_forecast=config.INVENTORY_DEMAND_MEAN,
+        histories=histories,
+        demand_forecast=[config.INVENTORY_DEMAND_MEAN] * config.N_INVENTORY_INSTANCES,
         energy_usage=0.0,
         fault_signals=0,
         route_travel_time=0.0,
         route_emissions=0.0,
         spoilage_prediction=0.0,
-        vehicles=_init_vehicles(graph, source, n_steps),
+        vehicles=_init_vehicles(retailers, retailer_costs, n_steps),
     )
 
 
-def _init_vehicles(graph: nx.DiGraph, source: str, n_steps: int) -> list[VehicleState]:
-    retailers = sink_nodes(graph)
+def _redraw_demand(
+    history: demand.DemandSeries, rng: np.random.Generator
+) -> demand.DemandSeries:
+    """Same calendar/weather/events, fresh noise draws: per-retailer demand
+    shares the mean process and differs only in daily noise."""
+    noise = np.array([demand.demand_noise(rng) for _ in history.demand])
+    return demand.DemandSeries(
+        day_of_year=history.day_of_year.copy(),
+        weekday=history.weekday.copy(),
+        weather=history.weather.copy(),
+        event_multiplier=history.event_multiplier.copy(),
+        demand_mean=history.demand_mean.copy(),
+        demand=history.demand_mean * noise,
+    )
+
+
+def _init_vehicles(
+    retailers: list[str], retailer_costs: list[tuple[float, float]], n_steps: int
+) -> list[VehicleState]:
+    """Vehicles idle at the source; per-trip route fields hold the default
+    retailer's costs until the first dispatch overwrites them."""
     vehicles: list[VehicleState] = []
     for i in range(config.N_VEHICLES):
         assigned = retailers[i % len(retailers)]
-        transit, emissions = _route_cost(graph, source, assigned)
+        transit, emissions = retailer_costs[i % len(retailer_costs)]
         sla_window = min(n_steps, int(np.ceil(transit)) + 1)
         vehicles.append(
             VehicleState(
@@ -201,6 +257,7 @@ def _init_vehicles(graph: nx.DiGraph, source: str, n_steps: int) -> list[Vehicle
                 route_emissions=emissions,
                 sla_window_ticks=sla_window,
                 chosen_slot=0,
+                busy_until=0,
                 delay=0.0,
                 emissions=0.0,
                 sla_violated=False,
