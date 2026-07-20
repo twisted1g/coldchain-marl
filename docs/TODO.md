@@ -1,15 +1,4 @@
-# Phase W — world fidelity
-
-### W4. Multi-instance
-Alg 4 line 5: S = {s(1)..s(n)} — несколько складов/маршрутов одновременно. Сейчас мир одноэкземплярный.
-
-### W5. Alg 6 на re-stocks и routes
-Section 4.1: переговоры про "delivery times, re-stocks, and change of routes" — сейчас только delivery slots. После W2 появляются реальные конфликты re-stock (два склада, одна машина) и route (смена маршрута ради SLA). Расширить `SlotParty`/`negotiate` на эти типы конфликтов.
-
-### W6. Stress + compare после W1–W5
-Перепрогнать `stress_eval` и trained-vs-random на новом мире, обновить baseline-профиль. Fingerprint-инструмент (`training/marl/fingerprint.py`) — для контроля детерминизма при каждом инкременте.
-
-# Phase V — визуализация (после Phase W)
+# Phase V — визуализация
 
 ### V1. Дашборд мира
 Живая картина эпизода поверх `world_state`: граф маршрутов с позициями vehicles, склад (stock / on_order / прибытия из W1–W2), температура vs пороги, spoilage risk по цепочке, delivery slots и их дедлайны. Тик-за-тиком проигрывание эпизода + скраббинг. Отправная точка — существующие notebooks, целевая форма — standalone (Plotly Dash / Streamlit, решить при дизайне).
@@ -25,6 +14,17 @@ Section 4.1: переговоры про "delivery times, re-stocks, and change 
 
 ### V5. Доработки после blockchain-фазы
 Слой поверх V1/V3: лента транзакций ledger'а, подписанные контракты как исходы переговоров (agreement → contract), DIDs участников на графе мира, статус smart-contract вызовов (Alg 8–18). Делать только после blockchain, но V1–V3 проектировать так, чтобы слой добавлялся без переделки (события мира — отдельный поток, рендер — подписчик).
+
+# Phase W — world fidelity (после визуализации)
+
+### W4. Multi-instance — DONE (см. DONE.md)
+Осталось: финальный trained-vs-random на full 150 — покрыто W6.
+
+### W5. Alg 6 на re-stocks и routes
+Section 4.1: переговоры про "delivery times, re-stocks, and change of routes" — сейчас только delivery slots. После W2 появляются реальные конфликты re-stock (два склада, одна машина) и route (смена маршрута ради SLA). Расширить `SlotParty`/`negotiate` на эти типы конфликтов.
+
+### W6. Stress + compare после W1–W5
+Перепрогнать `stress_eval` и trained-vs-random на новом мире, обновить baseline-профиль. Fingerprint-инструмент (`training/marl/fingerprint.py`) — для контроля детерминизма при каждом инкременте.
 
 # Отложенные неточности vs статья
 
