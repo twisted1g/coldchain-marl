@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import networkx as nx
 import numpy as np
@@ -54,6 +54,13 @@ class VehicleState:
     emissions: float
     sla_violated: bool
     conflict: bool
+    # Physical position on the graph: an in-transit truck steps one edge at a
+    # time (``edge_ticks_left`` counts down the current edge's transit), moving
+    # depot -> hub -> dc -> retail exactly like the cold-chain shipment.
+    current_node: str = ""
+    route: list[str] = field(default_factory=list)
+    edge_ticks_left: int = 0
+    carrying: Cargo | None = None
 
 
 @dataclass(slots=True)
@@ -74,6 +81,7 @@ class GlobalState:
     max_steps: int
     rng: np.random.Generator
     graph: nx.DiGraph
+    depot: str
     shipment: Shipment
     active_disruptions: list[Disruption]
     ambient_weather: Weather
@@ -104,12 +112,16 @@ class GlobalState:
     route_emissions: float
     spoilage_prediction: float
     vehicles: list[VehicleState]
+    # When set, a delivered shipment respawns instead of ending the episode, so
+    # the world rolls on and restock trucks complete real multi-tick trips.
+    rolling: bool = False
 
 
 def init_state(
     seed: int | None = None,
     max_steps: int | None = None,
     fruit: FruitKey | None = None,
+    rolling: bool = False,
 ) -> GlobalState:
     base_seed = config.DEFAULT_SEED if seed is None else seed
     rng = np.random.default_rng(base_seed)
@@ -175,22 +187,19 @@ def init_state(
         )
 
     retailers = sink_nodes(graph)
-    # Restock lead time (transit) is scaled down so an order can arrive AND be
-    # sold within the paper's 10-20 step episode: at raw transit ~5 in a 20-step
-    # horizon, ~5 ticks are pipeline-fill stockout and the last ~5 ticks of
-    # orders arrive after the episode ends, leaving inventory boundary-dominated.
-    # Emissions (carbon) are unscaled — this models faster restock vehicles, not
-    # relocated retailers. Only inventory/delivery read retailer_transit.
-    retailer_costs = [
-        (t * config.RESTOCK_TRANSIT_SCALE, e)
-        for t, e in (_route_cost(graph, source, r) for r in retailers)
-    ]
+    # The fleet stages at the source farm (the depot) and drives the real
+    # weighted shortest path to each retailer. Transit is the honest summed edge
+    # time — no scaling — because delivery/inventory train on the rolling horizon
+    # where a full trip fits. Only inventory/delivery read retailer_transit.
+    depot = source
+    retailer_costs = [_route_cost(graph, depot, r) for r in retailers]
 
     return GlobalState(
         tick=0,
         max_steps=n_steps,
         rng=rng,
         graph=graph,
+        depot=depot,
         shipment=shipment,
         active_disruptions=[],
         ambient_weather=weather,
@@ -220,7 +229,8 @@ def init_state(
         route_travel_time=0.0,
         route_emissions=0.0,
         spoilage_prediction=0.0,
-        vehicles=_init_vehicles(retailers, retailer_costs, n_steps),
+        vehicles=_init_vehicles(retailers, retailer_costs, n_steps, depot),
+        rolling=rolling,
     )
 
 
@@ -241,9 +251,12 @@ def _redraw_demand(
 
 
 def _init_vehicles(
-    retailers: list[str], retailer_costs: list[tuple[float, float]], n_steps: int
+    retailers: list[str],
+    retailer_costs: list[tuple[float, float]],
+    n_steps: int,
+    depot: str,
 ) -> list[VehicleState]:
-    """Vehicles idle at the source; per-trip route fields hold the default
+    """Vehicles idle at the depot; per-trip route fields hold the default
     retailer's costs until the first dispatch overwrites them."""
     vehicles: list[VehicleState] = []
     for i in range(config.N_VEHICLES):
@@ -262,6 +275,7 @@ def _init_vehicles(
                 emissions=0.0,
                 sla_violated=False,
                 conflict=False,
+                current_node=depot,
             )
         )
     return vehicles

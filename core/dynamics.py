@@ -3,14 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import networkx as nx
 import numpy as np
 
 from core import config
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
 from core.interfaces.intention import IntentionBuffer
 from core.interfaces.observations import all_obs
-from core.state import Cargo, GlobalState
+from core.state import Cargo, GlobalState, VehicleState
 from core.world import demand
+from core.world.fruits import get_params
+from core.world.graph import sink_nodes, source_nodes
 from core.world.graph_features import node_delay
 from core.world.noise import NoiseModel
 from core.world.spoilage import ArrheniusSpoilage, risk_to_label
@@ -34,7 +37,8 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
 
     buffer = IntentionBuffer()
     buffer.declare_all(actions)
-    conflicts = buffer.detect()
+    free = {i for i in range(len(state.vehicles)) if _vehicle_free(state, i)}
+    conflicts = buffer.detect(free)
 
     _apply_temperature_action(state, actions.get("temperature"))
     _apply_routing_action(state, actions.get("routing"))
@@ -42,6 +46,7 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     _apply_delivery_action(state, actions, conflicts)
     _apply_spoilage_action(state, actions.get("spoilage"))
 
+    _advance_vehicles(state)
     _advance_thermal_state(state)
     _advance_humidity(state)
     _advance_spoilage(state)
@@ -50,9 +55,14 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     _update_energy(state)
 
     delivered = state.shipment.current_node == state.shipment.target_node
-    done = state.tick >= state.max_steps or delivered
-    if done:
+    if delivered:
         state.shipment.ground_truth_label = risk_to_label(state.shipment.spoilage_risk)
+    # In the rolling world a delivered shipment respawns; the episode ends only
+    # at the horizon, so delivery/inventory get a long run of real restock trips.
+    done = state.tick >= state.max_steps or (delivered and not state.rolling)
+    infos = _build_infos(state, delivered)
+    if delivered and state.rolling and not done:
+        respawn_shipment(state)
 
     observations = all_obs(state)
     rewards = dict.fromkeys(OBS_FIELDS_BY_AGENT, 0.0)
@@ -60,7 +70,6 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     terminated["__all__"] = done
     truncated = dict.fromkeys(OBS_FIELDS_BY_AGENT, False)
     truncated["__all__"] = False
-    infos = _build_infos(state, delivered)
 
     return StepResult(
         observations=observations,
@@ -150,7 +159,9 @@ def slot_start(slot: int, max_steps: int) -> float:
 
 
 def _vehicle_free(state: GlobalState, i: int) -> bool:
-    return state.tick >= state.vehicles[i].busy_until
+    """A vehicle is available for a new order only when idle at the depot (not
+    already carrying / waiting for a slot window / mid-route)."""
+    return state.vehicles[i].carrying is None
 
 
 def expected_lead_time(state: GlobalState, instance: int) -> int:
@@ -176,13 +187,33 @@ def _apply_delivery_action(
     _dispatch_orders(state)
 
 
+def _delivery_path(state: GlobalState, retail: str) -> list[str]:
+    """Weighted shortest route the truck actually drives, depot -> ... -> retail."""
+    try:
+        return nx.shortest_path(
+            state.graph, state.depot, retail, weight="base_transit_time"
+        )
+    except nx.NetworkXNoPath:
+        return [state.depot, retail]
+
+
+def _path_cost(state: GlobalState, path: list[str]) -> tuple[int, float]:
+    transit = 0
+    emissions = 0.0
+    for u, v in zip(path[:-1], path[1:], strict=True):
+        edge = state.graph.edges[u, v]
+        transit += int(np.ceil(edge["base_transit_time"]))
+        emissions += float(edge["base_emissions"])
+    return transit, emissions
+
+
 def _dispatch_orders(state: GlobalState) -> None:
-    """First free vehicle takes the queue head and drives to the ordering
-    retailer (all vehicles depart from the same source, so the paper's distance
-    heuristic — Alg 5 line 15 — reduces to first-free); its chosen slot
-    schedules the trip. Departure waits for the slot window; delay/SLA/emissions
-    accrue on the dispatch tick (per trip, not per tick — an idle vehicle
-    neither drives nor emits)."""
+    """First idle vehicle takes the queue head and drives the real graph path to
+    the ordering retailer (all vehicles stage at the shared depot, so the paper's
+    distance heuristic — Alg 5 line 15 — reduces to first-free); its chosen slot
+    schedules the departure window. The trip is honest summed edge time; the
+    truck then advances one hop per tick in ``_advance_vehicles``. delay/SLA/
+    emissions are the trip's predicted cost, set on the dispatch tick."""
     while state.order_queue:
         free = [i for i in range(len(state.vehicles)) if _vehicle_free(state, i)]
         if not free:
@@ -191,28 +222,87 @@ def _dispatch_orders(state: GlobalState) -> None:
         vehicle = state.vehicles[i]
         instance, qty = state.order_queue.pop(0)
 
-        vehicle.route_transit = state.retailer_transit[instance]
-        vehicle.route_emissions = state.retailer_emissions[instance]
+        path = _delivery_path(state, f"retail_{instance}")
+        transit, emissions = _path_cost(state, path)
         departure = max(
             state.tick, int(np.ceil(slot_start(vehicle.chosen_slot, state.max_steps)))
         )
-        arrival = departure + int(np.ceil(vehicle.route_transit))
+        arrival = departure + transit
         deadline = slot_deadline(vehicle.chosen_slot, state.max_steps)
 
+        vehicle.route_transit = float(transit)
+        vehicle.route_emissions = emissions
         vehicle.busy_until = arrival
         vehicle.delay = max(0.0, arrival - deadline)
         vehicle.sla_violated = arrival > deadline
-        vehicle.emissions = vehicle.route_emissions
-        state.cargo.append(
-            Cargo(
-                vehicle=i,
-                instance=instance,
-                departure_tick=departure,
-                arrival_tick=arrival,
-                qty=qty,
-                emissions=vehicle.route_emissions,
-            )
+        vehicle.emissions = emissions
+        cargo = Cargo(
+            vehicle=i,
+            instance=instance,
+            departure_tick=departure,
+            # Filled with the actual delivery tick when the truck reaches the
+            # retailer; inventory credits it then. A large sentinel keeps it
+            # in-transit (spoilage decay applies) until then.
+            arrival_tick=state.max_steps + transit + 1,
+            qty=qty,
+            emissions=emissions,
         )
+        state.cargo.append(cargo)
+        vehicle.carrying = cargo
+        vehicle.current_node = state.depot
+        vehicle.route = path[1:]
+        vehicle.edge_ticks_left = 0
+
+
+def _advance_vehicles(state: GlobalState) -> None:
+    """Move each in-transit truck one graph edge at a time. A truck waits at the
+    depot until its slot window opens (``departure_tick``), then consumes each
+    edge's ``base_transit_time`` in ticks; on reaching the retailer it delivers
+    (crediting inventory) and returns to the depot."""
+    for vehicle in state.vehicles:
+        cargo = vehicle.carrying
+        if cargo is None or state.tick < cargo.departure_tick or not vehicle.route:
+            continue
+        if vehicle.edge_ticks_left <= 0:
+            vehicle.edge_ticks_left = int(
+                np.ceil(state.graph.edges[vehicle.current_node, vehicle.route[0]][
+                    "base_transit_time"
+                ])
+            )
+        vehicle.edge_ticks_left -= 1
+        if vehicle.edge_ticks_left <= 0:
+            vehicle.current_node = vehicle.route.pop(0)
+            if not vehicle.route:
+                _deliver_vehicle(state, vehicle)
+
+
+def _deliver_vehicle(state: GlobalState, vehicle: VehicleState) -> None:
+    cargo = vehicle.carrying
+    if cargo is not None:
+        cargo.arrival_tick = state.tick  # inventory credits it next tick
+    vehicle.carrying = None
+    vehicle.busy_until = state.tick
+    vehicle.current_node = state.depot  # deferred/instant return trip
+    vehicle.route = []
+    vehicle.edge_ticks_left = 0
+
+
+def respawn_shipment(state: GlobalState) -> None:
+    """Replace a delivered shipment with a fresh one entering the network;
+    everything else (inventory, vehicles, cargo, calendar) carries over."""
+    s = state.shipment
+    params = get_params(s.fruit_type)
+    s.current_node = str(state.rng.choice(source_nodes(state.graph)))
+    s.target_node = str(state.rng.choice(sink_nodes(state.graph)))
+    s.spoilage_risk = 0.0
+    s.freshness_score = 1.0
+    s.ground_truth_label = 0
+    s.age_ticks = 0
+    s.sensor_temperature_c = params.optimal_temp_c
+    s.desired_temperature_c = params.optimal_temp_c
+    s.sensor_humidity = state.ambient_humidity
+    state.route_travel_time = 0.0
+    state.route_emissions = 0.0
 
 
 def _apply_spoilage_action(state: GlobalState, action: Any) -> None:
