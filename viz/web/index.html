@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cold-Chain MARL · World Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Cold-Chain MARL <span class="sub">world dashboard</span></h1>
+    <div class="controls">
+      <label>episode
+        <select id="episodeSelect"></select>
+      </label>
+      <details class="runbox">
+        <summary>run new</summary>
+        <div class="runform">
+          <label>seed <input id="runSeed" type="number" value="90000" /></label>
+          <label>tag <input id="runTag" type="text" placeholder="(none)" /></label>
+          <label>scenario <input id="runScenario" type="text" placeholder="(none)" /></label>
+          <label>max_steps <input id="runMaxSteps" type="number" placeholder="20" /></label>
+          <button id="runBtn">rollout</button>
+        </div>
+      </details>
+      <span id="status" class="status"></span>
+    </div>
+  </header>
+
+  <section class="stepbar">
+    <button id="prevBtn">◀</button>
+    <button id="playBtn">▶ play</button>
+    <button id="nextBtn">▶</button>
+    <input id="tickSlider" type="range" min="0" max="0" value="0" />
+    <span id="tickLabel" class="ticklabel">tick 0 / 0</span>
+    <span id="headline" class="headline"></span>
+  </section>
+
+  <main class="grid">
+    <section class="col-left">
+      <div class="card">
+        <h2>supply-chain world</h2>
+        <div id="graph" class="graph"></div>
+      </div>
+      <div class="card">
+        <h2>system parameters</h2>
+        <div id="sysparams" class="sysparams"></div>
+      </div>
+    </section>
+
+    <section class="col-mid">
+      <h2 class="colhead">agents</h2>
+      <div id="agents" class="agents"></div>
+    </section>
+
+    <section class="col-right">
+      <div class="card"><h2>temperature (°C)</h2><div id="chartTemp" class="chart"></div></div>
+      <div class="card"><h2>spoilage / freshness</h2><div id="chartSpoil" class="chart"></div></div>
+      <div class="card"><h2>agent rewards</h2><div id="chartReward" class="chart"></div></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
