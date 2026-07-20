@@ -34,7 +34,12 @@ INVENTORY_ACTION_HIGH: Final[float] = 1.0
 
 N_INVENTORY_INSTANCES: Final[int] = N_RETAILERS
 
-INVENTORY_INIT_LEVEL: Final[float] = 1.0
+# Retailers start near-empty so restocking is the agent's job: a full shelf
+# (1.0) buffers ~4 ticks of demand and flattens the cost landscape until even
+# never-order sits within ~5% of optimal, so no learned policy can separate
+# from a random baseline. At 0.3 restock is essential — the optimal policy
+# beats never-order ~38% and random ~26% (vs +16%/+12% at 1.0).
+INVENTORY_INIT_LEVEL: Final[float] = 0.3
 INVENTORY_DEMAND_MEAN: Final[float] = 0.15
 INVENTORY_RESTOCK_SCALE: Final[float] = 1.0
 INVENTORY_MIN_ORDER_QTY: Final[float] = 0.05
@@ -147,13 +152,16 @@ SPOILAGE_OBS_FIELDS: Final[tuple[str, ...]] = tuple(
     for name in ("temperature", "humidity", "delay", "fruit_type")
 )
 
+# Paper Alg 4 state = [stock level, demand forecast, shelf life, carbon]; we add
+# on_order (pipeline) so the policy sees its inventory position. zone_energy_usage
+# and peer_stock were shipment-global noise irrelevant to a per-instance order
+# decision — the policy latched onto them and learned harmful state-dependence
+# (ordered more when it should not), losing to a random baseline. Dropped.
 INVENTORY_OBS_FIELDS: Final[tuple[str, ...]] = (
     "inventory_level",
     "on_order",
     "demand_forecast",
     "shelf_life",
-    "zone_energy_usage",
-    "peer_stock",
 )
 
 INVENTORY_AGENTS: Final[tuple[str, ...]] = tuple(

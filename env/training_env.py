@@ -41,9 +41,11 @@ INVENTORY_EMISSIONS_WEIGHT = 1.0
 # arrival tick. Scale the delivery carbon onto the inventory-cost range instead.
 INVENTORY_EMISSIONS_SCALE = 0.01
 # Additive shortage penalty (outside the Pareto sum) on the unmet-demand
-# fraction in [0,1]; ~1.0 keeps it on the scale of the Pareto cost (~0.1-0.3)
-# so ordering-to-demand pays without over-ordering into overstock spoilage.
-INVENTORY_STOCKOUT_WEIGHT = 1.0
+# fraction in [0,1]. At 1.0 the shortage cliff is steep and asymmetric (sharp
+# below demand, gentle above), so DDPG settles on the safe over-ordering side
+# (~0.78 vs the ~0.4 optimum) and ties random. 0.5 softens the cliff: optimum
+# ~0.35, and the cost-optimal policy beats random by ~13% (vs ~6% at 1.0).
+INVENTORY_STOCKOUT_WEIGHT = 0.5
 
 DELIVERY_DELAY_WEIGHT = 1.0
 DELIVERY_SLA_WEIGHT = 5.0

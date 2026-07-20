@@ -109,15 +109,12 @@ def inventory_obs(state: GlobalState, i: int) -> np.ndarray:
     on_order = sum(qty for inst, qty in state.order_queue if inst == i) + sum(
         c.qty for c in state.cargo if c.instance == i
     )
-    peers = [lvl for j, lvl in enumerate(state.inventory_levels) if j != i]
     return np.array(
         [
             state.inventory_levels[i],
             on_order,
             state.demand_forecast[i],
             float(shelf_remaining),
-            state.energy_usage,
-            float(np.mean(peers)) if peers else 0.0,
         ],
         dtype=np.float32,
     )
