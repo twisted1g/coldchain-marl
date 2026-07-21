@@ -10,7 +10,7 @@ from core import config
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
 from core.interfaces.intention import IntentionBuffer
 from core.interfaces.observations import all_obs
-from core.state import Cargo, GlobalState, VehicleState
+from core.state import Cargo, Consignment, GlobalState, VehicleState
 from core.world import demand
 from core.world.fruits import get_params
 from core.world.graph import sink_nodes, source_nodes
@@ -50,6 +50,7 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     _advance_thermal_state(state)
     _advance_humidity(state)
     _advance_spoilage(state)
+    _advance_loads(state)
     _advance_cargo(state)
     _maybe_sample_disruption(state)
     _update_energy(state)
@@ -249,9 +250,31 @@ def _dispatch_orders(state: GlobalState) -> None:
         )
         state.cargo.append(cargo)
         vehicle.carrying = cargo
+        vehicle.load = _new_crate(state, f"retail_{instance}")
         vehicle.current_node = state.depot
         vehicle.route = path[1:]
         vehicle.edge_ticks_left = 0
+
+
+def _new_crate(state: GlobalState, target: str) -> Consignment:
+    """A fresh crate loaded onto a dispatched truck: cold at the depot, bound for
+    its retailer. Carries its own thermal + spoilage state so goods spoil by
+    their own temperature (multi-instance redesign). The temperature agent is
+    wired to it in Phase 3; until then the setpoint stays at the fruit optimum."""
+    params = get_params(state.shipment.fruit_type)
+    return Consignment(
+        fruit_type=state.shipment.fruit_type,
+        current_node=state.depot,
+        target_node=target,
+        spoilage_risk=0.0,
+        ground_truth_label=0,
+        age_ticks=0,
+        perishability_index=1.0 / params.base_shelf_life_ticks,
+        sensor_temperature_c=params.optimal_temp_c,
+        sensor_humidity=state.ambient_humidity,
+        desired_temperature_c=params.optimal_temp_c,
+        freshness_score=1.0,
+    )
 
 
 def _advance_vehicles(state: GlobalState) -> None:
@@ -281,6 +304,7 @@ def _deliver_vehicle(state: GlobalState, vehicle: VehicleState) -> None:
     if cargo is not None:
         cargo.arrival_tick = state.tick  # inventory credits it next tick
     vehicle.carrying = None
+    vehicle.load = None  # crate delivered
     vehicle.busy_until = state.tick
     vehicle.current_node = state.depot  # deferred/instant return trip
     vehicle.route = []
@@ -362,17 +386,65 @@ def _advance_calendar(state: GlobalState) -> None:
         )
 
 
+def _advance_loads(state: GlobalState) -> None:
+    """Per-crate thermal + spoilage for every in-transit truck (multi-instance
+    redesign): each crate advances by its OWN sensor temperature, not the global
+    shipment's. Deterministic — no ``state.rng`` draws — so the main noise stream
+    (disruptions, demand) stays bit-exact and only cargo spoilage shifts. The
+    temperature agent is wired to ``desired_temperature_c`` in Phase 3; here the
+    setpoint is the fruit optimum, so crates ride cold and barely decay."""
+    for vehicle in state.vehicles:
+        crate = vehicle.load
+        cargo = vehicle.carrying
+        if crate is None or cargo is None:
+            continue
+        if not (cargo.departure_tick <= state.tick < cargo.arrival_tick):
+            continue
+        crate.current_node = vehicle.current_node
+        # thermal relaxation toward the setpoint plus ambient pull (mirrors the
+        # singleton ``_advance_thermal_state``, deterministic)
+        diff = crate.desired_temperature_c - crate.sensor_temperature_c
+        ambient_pull = (state.ambient_temp_c - crate.sensor_temperature_c) * 0.05
+        crate.sensor_temperature_c += 0.5 * diff + ambient_pull
+        # humidity relaxes to ambient without the rng noise term (noise would
+        # desync the shared stream)
+        crate.sensor_humidity = float(
+            np.clip(
+                crate.sensor_humidity
+                + (state.ambient_humidity - crate.sensor_humidity)
+                * config.HUMIDITY_AMBIENT_PULL,
+                0.0,
+                1.0,
+            )
+        )
+        delay = node_delay(state, crate.current_node)
+        delta = _spoilage_model.risk_delta(
+            crate.fruit_type,
+            crate.sensor_temperature_c,
+            crate.sensor_humidity,
+            delay,
+            dt_ticks=1.0,
+        )
+        crate.spoilage_risk = float(np.clip(crate.spoilage_risk + delta, 0.0, 1.0))
+        crate.freshness_score = float(max(0.0, 1.0 - crate.spoilage_risk))
+        crate.age_ticks += 1
+
+
 def _advance_cargo(state: GlobalState) -> None:
-    """In-transit spoilage: moving cargo decays with the chain-wide spoilage
-    risk (single-shipment proxy until multi-instance). Queued cargo and cargo
+    """In-transit spoilage: each truck's cargo decays with ITS crate's own
+    spoilage risk (per-crate, multi-instance redesign). Queued cargo and cargo
     waiting for its slot window sit in cold storage and do not decay."""
-    decay = config.TRANSIT_SPOILAGE_RATE * state.shipment.spoilage_risk
     state.transit_loss = [0.0] * config.N_INVENTORY_INSTANCES
-    for c in state.cargo:
-        if c.departure_tick <= state.tick < c.arrival_tick:
-            lost = c.qty * decay
-            c.qty -= lost
-            state.transit_loss[c.instance] += lost
+    for vehicle in state.vehicles:
+        cargo = vehicle.carrying
+        crate = vehicle.load
+        if cargo is None or crate is None:
+            continue
+        if not (cargo.departure_tick <= state.tick < cargo.arrival_tick):
+            continue
+        lost = cargo.qty * config.TRANSIT_SPOILAGE_RATE * crate.spoilage_risk
+        cargo.qty -= lost
+        state.transit_loss[cargo.instance] += lost
 
 
 def _maybe_sample_disruption(state: GlobalState) -> None:
