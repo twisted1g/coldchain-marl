@@ -30,7 +30,12 @@ from training.marl.maddpg import DeliveryHandle, MADDPGDelivery
 SEED = 0
 NUM_ITERATIONS = 150
 EPISODES_PER_ITERATION = 40
-EVAL_EPISODES = 30
+# Per-iteration curve eval is the bulk of env steps; keep it small and run it
+# every EVAL_EVERY iters (plus the last). The final trained-vs-random check
+# uses the larger COMPARE_EPISODES for a stable margin.
+EVAL_EPISODES = 10
+EVAL_EVERY = 5
+COMPARE_EPISODES = 30
 
 AGENTS = list(OBS_FIELDS_BY_AGENT)
 ALGO = {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 from pathlib import Path
 
 import numpy as np
@@ -10,11 +11,13 @@ import torch
 from env.training_env import ColdChainTrainingEnv
 from training.config import (
     ARTIFACTS,
+    COMPARE_EPISODES,
     COMPARE_METRIC,
     COMPARE_SEED,
     CURVE_CSV,
     EPISODES_PER_ITERATION,
     EVAL_EPISODES,
+    EVAL_EVERY,
     EVAL_SEED,
     FORECASTER_PATH,
     LEARNERS,
@@ -96,6 +99,7 @@ def main() -> None:
     forecaster = FORECASTER_PATH if args.forecaster else None
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    torch.set_num_threads(os.cpu_count() or torch.get_num_threads())
 
     ARTIFACTS.mkdir(exist_ok=True)
     MODULES_DIR.mkdir(parents=True, exist_ok=True)
@@ -123,6 +127,11 @@ def main() -> None:
     rows: list[dict[str, float]] = []
     for it in range(1, args.iters + 1):
         collect_and_learn(train_env, agents, EPISODES_PER_ITERATION)
+        # Eval is the bulk of env steps; only run it every EVAL_EVERY iters
+        # (and on the last) instead of every iteration.
+        if it % EVAL_EVERY and it != args.iters:
+            print(f"iter {it:3d}  (collect only)")
+            continue
         row: dict[str, float] = {"iteration": it}
         parts = []
         for a in learners:
@@ -189,14 +198,14 @@ def _compare_block(
     trained = build_agents(env, block)
     trained[block[0]].load(module_dir(block[0], tag))
     trained_m = float(
-        np.mean([rollout(env, trained, a, EVAL_EPISODES, metric_key)[1] for a in block])
+        np.mean([rollout(env, trained, a, COMPARE_EPISODES, metric_key)[1] for a in block])
     )
 
     rand = build_agents(env, block)
     for a in block:
         rand[a] = RandomAgent(env.action_space(a))
     random_m = float(
-        np.mean([rollout(env, rand, a, EVAL_EPISODES, metric_key)[1] for a in block])
+        np.mean([rollout(env, rand, a, COMPARE_EPISODES, metric_key)[1] for a in block])
     )
 
     _print_compare(name, metric_key, direction, trained_m, random_m)
