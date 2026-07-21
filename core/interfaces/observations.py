@@ -84,13 +84,42 @@ def routing_obs(state: GlobalState) -> np.ndarray:
 
 
 def temperature_obs(state: GlobalState) -> np.ndarray:
-    s = state.shipment
+    return _temperature_obs_fields(
+        state,
+        state.shipment.sensor_temperature_c,
+        state.shipment.sensor_humidity,
+        state.shipment.desired_temperature_c,
+        state.energy_usage,
+    )
+
+
+def crate_temperature_obs(state: GlobalState, crate) -> np.ndarray:
+    """Temperature obs built from a single truck-borne crate (CTDE decentralized
+    execution — the trained temperature policy runs per crate at inference).
+    Same layout as ``temperature_obs``; energy is the crate's own |ΔT_ambient|."""
+    energy = abs(crate.sensor_temperature_c - state.ambient_temp_c) * 0.1
+    return _temperature_obs_fields(
+        state,
+        crate.sensor_temperature_c,
+        crate.sensor_humidity,
+        crate.desired_temperature_c,
+        energy,
+    )
+
+
+def _temperature_obs_fields(
+    state: GlobalState,
+    sensor_temp: float,
+    humidity: float,
+    desired_temp: float,
+    energy: float,
+) -> np.ndarray:
     return np.array(
         [
-            s.sensor_temperature_c,
-            s.sensor_humidity,
-            s.desired_temperature_c,
-            state.energy_usage,
+            sensor_temp,
+            humidity,
+            desired_temp,
+            energy,
             float(state.fault_signals),
         ],
         dtype=np.float32,

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import networkx as nx
+import numpy as np
 
 from core import config
 from core.world.fruits import get_params
@@ -154,6 +155,24 @@ def _tick_record(
                 "conflict": bool(v.conflict),
                 "current_node": v.current_node,
                 "carrying": (v.carrying.instance if v.carrying is not None else None),
+                "route_transit": float(v.route_transit),
+                "route_emissions": float(v.route_emissions),
+                "sla_window_ticks": int(v.sla_window_ticks),
+                "emissions": float(v.emissions),
+                # Per-crate cold-chain state (multi-instance redesign): each
+                # truck's goods carry their own temperature / spoilage, driven by
+                # the temperature policy per crate. ``null`` when the truck is idle.
+                "crate": (
+                    {
+                        "sensor_temp": float(v.load.sensor_temperature_c),
+                        "desired_temp": float(v.load.desired_temperature_c),
+                        "sensor_humidity": float(v.load.sensor_humidity),
+                        "spoilage_risk": float(v.load.spoilage_risk),
+                        "freshness_score": float(v.load.freshness_score),
+                    }
+                    if v.load is not None
+                    else None
+                ),
             }
             for v in state.vehicles
         ],
@@ -177,6 +196,28 @@ def build_env(
     env = ColdChainTrainingEnv(cfg)
     agents = load_agents(env, LEARNERS, tag)
     return env, agents
+
+
+def _drive_crate_setpoints(state: Any, agents: dict[str, Any]) -> None:
+    """CTDE decentralized execution: run the one trained temperature policy on
+    each truck-borne crate and set its reefer setpoint, so every crate holds its
+    own temperature (paper Section 4.2 — deploy the edge policy per crate/truck).
+    ``_advance_loads`` applies the setpoint on the next tick."""
+    policy = agents.get("temperature")
+    if policy is None:
+        return
+    from core.config import TEMPERATURE_ACTION_HIGH_C, TEMPERATURE_ACTION_LOW_C
+    from core.interfaces.observations import crate_temperature_obs
+
+    for vehicle in state.vehicles:
+        crate = vehicle.load
+        if crate is None:
+            continue
+        action = policy.act(crate_temperature_obs(state, crate), explore=False)
+        value = float(np.asarray(action).flatten()[0])
+        crate.desired_temperature_c = float(
+            min(max(value, TEMPERATURE_ACTION_LOW_C), TEMPERATURE_ACTION_HIGH_C)
+        )
 
 
 def run_inference(
@@ -210,6 +251,7 @@ def run_inference(
                 actions = mediate.resolve(actions, env.world_state)
             obs, rewards, _terminated, _truncated, infos = env.step(actions)
             state = env.world_state
+            _drive_crate_setpoints(state, agents)
 
             rec = _tick_record(state, rewards, actions, infos)
             rec["shipment_no"] = shipment_no
