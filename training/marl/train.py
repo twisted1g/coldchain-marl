@@ -82,6 +82,11 @@ def _parse_args() -> argparse.Namespace:
         default=NUM_ITERATIONS,
         help="training iterations (default full run; lower for a quick smoke)",
     )
+    p.add_argument(
+        "--rolling",
+        action="store_true",
+        help="rolling world (shipment respawns, long horizon) — for delivery/inventory",
+    )
     return p.parse_args()
 
 
@@ -97,12 +102,14 @@ def main() -> None:
 
     train_env = ColdChainTrainingEnv(
         env_config(
-            TRAIN_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob
+            TRAIN_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob,
+            rolling=args.rolling,
         )
     )
     eval_env = ColdChainTrainingEnv(
         env_config(
-            EVAL_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob
+            EVAL_SEED, learners, forecaster, args.scenario_bank, args.scenario_prob,
+            rolling=args.rolling,
         )
     )
     agents = build_agents(train_env, learners)
@@ -137,7 +144,7 @@ def main() -> None:
     for a in learners:
         agents[a].save(module_dir(a, args.tag))
 
-    _compare(learners, forecaster, args.tag)
+    _compare(learners, forecaster, args.tag, args.rolling)
     print(f"\nsaved curve -> {curve_csv}\nsaved modules -> {MODULES_DIR}")
 
 
@@ -157,20 +164,27 @@ def _print_compare(
 
 
 def _compare(
-    learners: list[str], forecaster: Path | None = None, tag: str | None = None
+    learners: list[str],
+    forecaster: Path | None = None,
+    tag: str | None = None,
+    rolling: bool = False,
 ) -> None:
     """Trained-vs-random sanity check per learner block on a held-out seed set."""
     print("\ntrained vs random:")
     for name, block in learner_blocks(learners).items():
-        _compare_block(name, block, forecaster, tag)
+        _compare_block(name, block, forecaster, tag, rolling)
 
 
 def _compare_block(
-    name: str, block: list[str], forecaster: Path | None = None, tag: str | None = None
+    name: str,
+    block: list[str],
+    forecaster: Path | None = None,
+    tag: str | None = None,
+    rolling: bool = False,
 ) -> None:
     """Compare one learner block (single agent, or delivery MADDPG vehicle group)."""
     metric_key, direction = COMPARE_METRIC[block[0]]
-    env = ColdChainTrainingEnv(env_config(COMPARE_SEED, block, forecaster))
+    env = ColdChainTrainingEnv(env_config(COMPARE_SEED, block, forecaster, rolling=rolling))
 
     trained = build_agents(env, block)
     trained[block[0]].load(module_dir(block[0], tag))

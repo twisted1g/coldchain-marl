@@ -110,6 +110,7 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         super().__init__(
             max_steps=config.get("max_steps", DEFAULT_MAX_STEPS),
             fruit=FruitKey(config.get("fruit", DEFAULT_FRUIT)),
+            rolling=bool(config.get("rolling", False)),
         )
         supported: dict[str, RewardMethod] = {
             "temperature": self._temperature_reward,

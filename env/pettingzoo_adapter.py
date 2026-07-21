@@ -20,10 +20,12 @@ class ColdChainParallelEnv(ParallelEnv):
         seed: int | None = None,
         max_steps: int | None = None,
         fruit: FruitKey | None = None,
+        rolling: bool = False,
     ) -> None:
         self._seed = seed
         self._max_steps = max_steps
         self._fruit = fruit
+        self._rolling = rolling
         self._state: GlobalState | None = None
         self.observation_spaces: dict[str, gym.Space] = make_observation_spaces()
         self.action_spaces: dict[str, gym.Space] = make_action_spaces()
@@ -50,7 +52,10 @@ class ColdChainParallelEnv(ParallelEnv):
     ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         active_seed = seed if seed is not None else self._seed
         self._state = init_state(
-            seed=active_seed, max_steps=self._max_steps, fruit=self._fruit
+            seed=active_seed,
+            max_steps=self._max_steps,
+            fruit=self._fruit,
+            rolling=self._rolling,
         )
         self.agents = list(self.possible_agents)
         observations = all_obs(self._state)

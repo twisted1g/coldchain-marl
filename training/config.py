@@ -133,12 +133,17 @@ def env_config(
     forecaster: Path | None = None,
     scenario_bank: str | None = None,
     scenario_prob: float = 1.0,
+    rolling: bool = False,
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
         "fruit": FRUIT,
-        "max_steps": DEFAULT_MAX_STEPS,
+        # Delivery/inventory train on the long rolling horizon (the shipment
+        # respawns instead of ending the episode) so restock trucks complete
+        # real multi-hop trips; other agents keep the short single-shipment episode.
+        "max_steps": core_config.ROLLING_HORIZON if rolling else DEFAULT_MAX_STEPS,
         "base_seed": base_seed,
         "learners": list(learners),
+        "rolling": rolling,
     }
     if forecaster is not None:
         cfg["forecaster"] = forecaster
