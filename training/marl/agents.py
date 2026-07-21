@@ -19,6 +19,10 @@ from training.marl.gnn import GNN_EMBED_DIM, SpoilageGNN
 
 Action = np.ndarray | np.integer | int
 
+# Networks and per-update batches live here; replay storage stays on CPU (large,
+# and only sampled minibatches need the accelerator). Falls back to CPU cleanly.
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def mlp(dims: list[int], *, final_activation: nn.Module | None = None) -> nn.Sequential:
     layers: list[nn.Module] = []
@@ -174,6 +178,11 @@ class DDPGAgent:
         qval = ValueOperator(
             module=QNet(obs_dim, act_dim, hidden), in_keys=["observation", "action"]
         )
+        # Move the networks (incl. the actor's scale buffers used in act()) before
+        # building the loss; LossModule keeps its own param container and .to() on
+        # it would not move these originals.
+        self._actor.to(DEVICE)
+        qval.to(DEVICE)
 
         self._loss = DDPGLoss(actor_network=self._actor, value_network=qval)
         self._loss.make_value_estimator(gamma=cfg["gamma"])
@@ -191,10 +200,11 @@ class DDPGAgent:
 
     def act(self, obs: np.ndarray, *, explore: bool) -> np.ndarray:
         td = TensorDict(
-            {"observation": torch.as_tensor(obs, dtype=torch.float32)}, batch_size=[]
+            {"observation": torch.as_tensor(obs, dtype=torch.float32, device=DEVICE)},
+            batch_size=[],
         )
         with torch.no_grad():
-            action = self._actor(td)["action"].numpy()
+            action = self._actor(td)["action"].cpu().numpy()
         if explore:
             action = action + np.random.normal(0.0, self._sigma).astype(np.float32)
         return np.clip(action, self._low, self._high).astype(np.float32)
@@ -222,7 +232,7 @@ class DDPGAgent:
     def update(self) -> dict[str, float]:
         if len(self._rb) < self._warmup:
             return {}
-        batch = self._rb.sample(self._batch_size)
+        batch = self._rb.sample(self._batch_size).to(DEVICE)
         out = self._loss(batch)
         loss = out["loss_actor"] + out["loss_value"]
         self._opt.zero_grad()
@@ -239,7 +249,9 @@ class DDPGAgent:
         torch.save(self._actor.state_dict(), path / "actor.pt")
 
     def load(self, path: Path) -> None:
-        self._actor.load_state_dict(torch.load(path / "actor.pt", weights_only=True))
+        self._actor.load_state_dict(
+            torch.load(path / "actor.pt", weights_only=True, map_location=DEVICE)
+        )
 
 
 class DQNAgent:
@@ -256,6 +268,7 @@ class DQNAgent:
             spec=Categorical(self._n),
             action_space="categorical",
         )
+        self._qnet.to(DEVICE)
         self._loss = DQNLoss(self._qnet, action_space="categorical", double_dqn=True)
         self._loss.make_value_estimator(gamma=cfg["gamma"])
         self._updater = SoftUpdate(self._loss, tau=cfg["tau"])
@@ -282,10 +295,11 @@ class DQNAgent:
             if np.random.random() < self._epsilon():
                 return np.int64(np.random.randint(self._n))
         td = TensorDict(
-            {"observation": torch.as_tensor(obs, dtype=torch.float32)}, batch_size=[]
+            {"observation": torch.as_tensor(obs, dtype=torch.float32, device=DEVICE)},
+            batch_size=[],
         )
         with torch.no_grad():
-            action = self._qnet(td)["action"]
+            action = self._qnet(td)["action"].cpu()
         return np.int64(int(action.argmax()) if action.ndim else int(action))
 
     def observe(
@@ -311,7 +325,7 @@ class DQNAgent:
     def update(self) -> dict[str, float]:
         if len(self._rb) < self._warmup:
             return {}
-        batch = self._rb.sample(self._batch_size)
+        batch = self._rb.sample(self._batch_size).to(DEVICE)
         out = self._loss(batch)
         loss = out["loss"]
         self._opt.zero_grad()
@@ -325,7 +339,9 @@ class DQNAgent:
         torch.save(self._qnet.state_dict(), path / "qnet.pt")
 
     def load(self, path: Path) -> None:
-        self._qnet.load_state_dict(torch.load(path / "qnet.pt", weights_only=True))
+        self._qnet.load_state_dict(
+            torch.load(path / "qnet.pt", weights_only=True, map_location=DEVICE)
+        )
 
 
 class SharedHandle:
@@ -375,17 +391,20 @@ class SpoilageAgent:
         self._encoder.eval()
         for p in self._encoder.parameters():
             p.requires_grad_(False)
+        self._encoder.to(DEVICE)
         graph = build_supply_chain(np.random.default_rng(0))
-        self._edge_index = torch.as_tensor(static_edge_index(graph), dtype=torch.long)
+        self._edge_index = torch.as_tensor(
+            static_edge_index(graph), dtype=torch.long, device=DEVICE
+        )
         self._ddpg = DDPGAgent(GNN_EMBED_DIM, action_space, cfg)
 
     def _encode(self, obs: np.ndarray) -> np.ndarray:
-        x = torch.as_tensor(obs, dtype=torch.float32).reshape(
+        x = torch.as_tensor(obs, dtype=torch.float32, device=DEVICE).reshape(
             self._n_nodes, SPOILAGE_NODE_FEATURES
         )
         with torch.no_grad():
             z = self._encoder(x, self._edge_index)
-        return z.squeeze(0).numpy()
+        return z.squeeze(0).cpu().numpy()
 
     def act(self, obs: np.ndarray, *, explore: bool) -> np.ndarray:
         return self._ddpg.act(self._encode(obs), explore=explore)
