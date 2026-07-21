@@ -1,187 +1,109 @@
-"""Web service for the world dashboard: serve the JS frontend and episode data.
+"""Static frontend server for the dashboard.
 
-Zero extra Python dependencies — stdlib ``http.server`` only. Endpoints:
+Serves the built Vite bundle (``web/dist``) — the inference API is a separate
+service (``viz.api``). The frontend reaches the API via ``window.API_BASE``,
+injected into ``index.html`` at serve time (``--api-base``, default the same host
+on the API port). Run both together with ``python -m viz.serve``.
 
-    GET  /                       -> the single-page frontend
-    GET  /static/<file>          -> frontend assets (css, js)
-    GET  /api/episodes           -> list recorded episodes
-    GET  /api/episode/<name>     -> {meta, ticks} for one episode
-    POST /api/run                -> roll out a new episode and return it
-                                    body: {seed, tag, scenario, max_steps}
+Build the bundle first: ``npm --prefix viz/web install && npm --prefix viz/web run build``.
 
-The ``/api/run`` handler imports the rollout lazily (it pulls torch), so listing
-and viewing recorded episodes stay light.
+    GET  /                -> dist/index.html (with API_BASE injected)
+    GET  /<asset>         -> dist/<asset> (hashed js/css, etc.)
 """
 
 from __future__ import annotations
 
 import argparse
-import json
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
-ARTIFACTS = Path(__file__).resolve().parent.parent / "artifacts"
-EPISODES_DIR = ARTIFACTS / "episodes"
+DIST = WEB_DIR / "dist"
 
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
 }
 
 
-def _read_episode(path: Path) -> dict[str, Any]:
-    meta: dict[str, Any] | None = None
-    ticks: list[dict[str, Any]] = []
-    with path.open() as f:
-        for line in f:
-            rec = json.loads(line)
-            if rec["type"] == "meta":
-                meta = rec
-            else:
-                ticks.append(rec)
-    return {"name": path.stem, "meta": meta, "ticks": ticks}
+class StaticHandler(BaseHTTPRequestHandler):
+    api_base: str = ""
 
-
-def _list_episodes() -> list[str]:
-    if not EPISODES_DIR.exists():
-        return []
-    return sorted(p.stem for p in EPISODES_DIR.glob("*.jsonl"))
-
-
-class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args: Any) -> None:  # quieter console
         pass
 
-    def _send_json(self, payload: Any, status: int = 200) -> None:
-        body = json.dumps(payload).encode()
+    def _send_bytes(self, body: bytes, content_type: str, status: int = 200) -> None:
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def _send_file(self, path: Path) -> None:
         if not path.is_file():
-            self._send_json({"error": "not found"}, 404)
+            self._send_bytes(b"not found", "text/plain; charset=utf-8", 404)
             return
-        body = path.read_bytes()
-        self.send_response(200)
-        self.send_header(
-            "Content-Type", _CONTENT_TYPES.get(path.suffix, "application/octet-stream")
-        )
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        ctype = _CONTENT_TYPES.get(path.suffix, "application/octet-stream")
+        self._send_bytes(path.read_bytes(), ctype)
+
+    def _send_index(self) -> None:
+        """Serve index.html with the API base URL injected as ``window.API_BASE``."""
+        index = DIST / "index.html"
+        if not index.is_file():
+            self._send_bytes(
+                b"frontend not built. run: npm --prefix viz/web install && "
+                b"npm --prefix viz/web run build",
+                "text/plain; charset=utf-8",
+                503,
+            )
+            return
+        html = index.read_text()
+        inject = f'<script>window.API_BASE = "{self.api_base}";</script>'
+        if "</head>" in html:
+            html = html.replace("</head>", f"  {inject}\n</head>", 1)
+        else:
+            html = inject + html
+        self._send_bytes(html.encode(), _CONTENT_TYPES[".html"])
 
     def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path = urlparse(self.path).path
         if path == "/" or path == "/index.html":
-            self._send_file(WEB_DIR / "index.html")
-        elif path.startswith("/static/"):
-            self._send_file(WEB_DIR / path[len("/static/"):])
-        elif path == "/api/stream":
-            self._stream(parse_qs(parsed.query))
-        elif path == "/api/episodes":
-            self._send_json({"episodes": _list_episodes()})
-        elif path.startswith("/api/episode/"):
-            name = path[len("/api/episode/"):]
-            fpath = EPISODES_DIR / f"{name}.jsonl"
-            if not fpath.is_file():
-                self._send_json({"error": "episode not found"}, 404)
-                return
-            self._send_json(_read_episode(fpath))
+            self._send_index()
+            return
+        # Serve any built asset by path, guarding against traversal outside dist.
+        target = (DIST / path.lstrip("/")).resolve()
+        if DIST.resolve() in target.parents:
+            self._send_file(target)
         else:
-            self._send_json({"error": "not found"}, 404)
+            self._send_bytes(b"not found", "text/plain; charset=utf-8", 404)
 
-    def do_POST(self) -> None:
-        if self.path != "/api/run":
-            self._send_json({"error": "not found"}, 404)
-            return
-        length = int(self.headers.get("Content-Length", 0))
-        req = json.loads(self.rfile.read(length) or b"{}")
-        try:
-            payload = self._run_episode(req)
-        except Exception as exc:  # surface rollout errors to the UI
-            self._send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
-            return
-        self._send_json(payload)
 
-    def _run_episode(self, req: dict[str, Any]) -> dict[str, Any]:
-        from viz.record import episode_name, record_episode, write_episode
-
-        seed = int(req.get("seed", 90_000))
-        episodes = max(1, int(req.get("episodes", 1) or 1))
-        tag = req.get("tag") or None
-        scenario = req.get("scenario") or None
-        max_steps = req.get("max_steps")
-        max_steps = int(max_steps) if max_steps else None
-        mediator = req.get("mediator") or "off"
-
-        latest: dict[str, Any] = {}
-        for k in range(episodes):
-            records = record_episode(seed + k, tag, scenario, max_steps, mediator)
-            name = episode_name(seed + k, tag)
-            write_episode(records, EPISODES_DIR / f"{name}.jsonl")
-            meta = next(r for r in records if r["type"] == "meta")
-            ticks = [r for r in records if r["type"] == "tick"]
-            latest = {"name": name, "meta": meta, "ticks": ticks}
-        return latest
-
-    def _stream(self, q: dict[str, list[str]]) -> None:
-        """Server-sent events: run a rolling live inference, one tick per event."""
-        from viz.live import DEFAULT_HORIZON, live_stream
-
-        def qint(key: str, default: int) -> int:
-            try:
-                return int(q.get(key, [""])[0])
-            except (ValueError, TypeError):
-                return default
-
-        seed = qint("seed", 90_000)
-        horizon = qint("horizon", DEFAULT_HORIZON)
-        max_steps = qint("max_steps", 0) or None
-        tag = (q.get("tag", [""])[0] or None)
-        mediator = q.get("mediator", ["llm"])[0] or "llm"
-        pace = max(0.0, float(q.get("pace", ["0.9"])[0] or 0.9))
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-        try:
-            for rec in live_stream(seed, tag, horizon, max_steps, mediator):
-                self.wfile.write(f"data: {json.dumps(rec)}\n\n".encode())
-                self.wfile.flush()
-                time.sleep(pace)
-            self.wfile.write(b"event: end\ndata: {}\n\n")
-            self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
-            return
-        except Exception as exc:
-            try:
-                self.wfile.write(
-                    f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n".encode()
-                )
-                self.wfile.flush()
-            except OSError:
-                pass
+def build_server(host: str, port: int, api_base: str) -> ThreadingHTTPServer:
+    handler = type("BoundStaticHandler", (StaticHandler,), {"api_base": api_base})
+    return ThreadingHTTPServer((host, port), handler)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--api-base",
+        default=None,
+        help="inference API base URL (default http://<host>:8001)",
+    )
     args = parser.parse_args()
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"cold-chain dashboard on http://{args.host}:{args.port}")
+    api_base = args.api_base or f"http://{args.host}:8001"
+    server = build_server(args.host, args.port, api_base)
+    print(f"cold-chain dashboard on http://{args.host}:{args.port}  (API {api_base})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
