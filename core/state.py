@@ -28,7 +28,15 @@ _AMBIENT_HUMIDITY_BY_WEATHER: dict[Weather, float] = {
 
 
 @dataclass(slots=True)
-class Shipment:
+class Consignment:
+    """A crate of perishable goods with its own thermal + spoilage state.
+
+    Today one ``Consignment`` is the single global cold-chain shipment
+    (``GlobalState.shipment``); the multi-instance redesign moves a crate onto
+    each delivery vehicle (``VehicleState.load``) so temperature / spoilage /
+    routing become per-crate. See docs/multi_instance_redesign.md.
+    """
+
     fruit_type: FruitKey
     current_node: str
     target_node: str
@@ -40,6 +48,10 @@ class Shipment:
     sensor_humidity: float
     desired_temperature_c: float
     freshness_score: float
+
+
+# Back-compat alias: the singleton is still spelled ``Shipment`` in older code.
+Shipment = Consignment
 
 
 @dataclass(slots=True)
@@ -61,6 +73,9 @@ class VehicleState:
     route: list[str] = field(default_factory=list)
     edge_ticks_left: int = 0
     carrying: Cargo | None = None
+    # The crate riding this vehicle (multi-instance redesign). Unused until the
+    # per-crate dynamics land (Phase 2); ``None`` = empty truck.
+    load: Consignment | None = None
 
 
 @dataclass(slots=True)
@@ -82,7 +97,7 @@ class GlobalState:
     rng: np.random.Generator
     graph: nx.DiGraph
     depot: str
-    shipment: Shipment
+    shipment: Consignment
     active_disruptions: list[Disruption]
     ambient_weather: Weather
     ambient_temp_c: float
@@ -140,7 +155,7 @@ def init_state(
     params = get_params(fruit)
     desired_temp = params.optimal_temp_c
 
-    shipment = Shipment(
+    shipment = Consignment(
         fruit_type=fruit,
         current_node=source,
         target_node=target,
