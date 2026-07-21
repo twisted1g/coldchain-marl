@@ -3,125 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cold-Chain MARL · Operations Dashboard</title>
+  <title>Cold-Chain MARL · Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css" />
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo">❄</span>
-      <div>
-        <h1>Cold-Chain MARL</h1>
-        <span class="sub">multi-agent supply-chain operations</span>
-      </div>
-    </div>
-    <div class="controls">
-      <label class="field">episode
-        <select id="episodeSelect"></select>
-      </label>
-      <details class="runbox">
-        <summary>+ new rollout</summary>
-        <div class="runform">
-          <label>seed <input id="runSeed" type="number" value="90000" /></label>
-          <label>episodes <input id="runEpisodes" type="number" value="1" min="1" /></label>
-          <label>tag <input id="runTag" type="text" placeholder="(none)" /></label>
-          <label>scenario <input id="runScenario" type="text" placeholder="(none)" /></label>
-          <label>max_steps <input id="runMaxSteps" type="number" placeholder="20" /></label>
-          <label>live horizon <input id="runHorizon" type="number" value="60" /></label>
-          <label>mediator
-            <select id="runMediator">
-              <option value="llm" selected>LLM (Alg 6)</option>
-              <option value="greedy">greedy</option>
-              <option value="off">off</option>
-            </select>
-          </label>
-          <button id="runBtn">record rollout</button>
-        </div>
-      </details>
-      <span id="status" class="status">loading…</span>
-    </div>
-  </header>
-
-  <section id="kpibar" class="kpibar"></section>
-
-  <section class="stepbar">
-    <div class="stepbtns">
-      <button id="liveBtn" class="live" title="rolling live inference"><span class="dot"></span>live</button>
-      <button id="prevBtn" class="icon" title="previous tick">◀</button>
-      <button id="playBtn">▶ play</button>
-      <button id="nextBtn" class="icon" title="next tick">▶</button>
-    </div>
-    <input id="tickSlider" type="range" min="0" max="0" value="0" />
-    <span id="tickLabel" class="ticklabel">tick 0 / 0</span>
-    <span id="headline" class="headline"></span>
-  </section>
-
-  <main class="layout">
-    <section class="card area-graph">
-      <div class="cardhead">
-        <div>
-          <h2>supply-chain network</h2>
-          <span class="hint">◆ cold-chain shipment routes farm→retail · ▪ restock trucks run farm→hub→dc→retail</span>
-        </div>
-        <span id="graphLegend" class="legend"></span>
-      </div>
-      <div id="graph" class="graph"></div>
-    </section>
-
-    <aside class="area-side">
-      <section class="card">
-        <div class="cardhead"><h2>retailer inventory</h2></div>
-        <div id="invTable"></div>
-      </section>
-      <section class="card">
-        <div class="cardhead"><h2>delivery fleet</h2></div>
-        <div id="fleet" class="fleet"></div>
-      </section>
-      <section class="card">
-        <div class="cardhead"><h2>order queue <span id="queueCount" class="badge"></span></h2></div>
-        <div id="queue" class="queue"></div>
-      </section>
-      <section id="negoCard" class="card nego-card">
-        <div class="cardhead">
-          <h2>LLM slot negotiation <span id="negoCount" class="badge"></span></h2>
-          <span id="negoMediator" class="hint"></span>
-        </div>
-        <div id="negotiation" class="negotiation"></div>
-      </section>
-    </aside>
-
-    <section class="area-charts">
-      <div class="card"><div class="cardhead"><h2>temperature °C</h2></div><div id="chartTemp" class="chart"></div></div>
-      <div class="card"><div class="cardhead"><h2>spoilage &amp; freshness</h2></div><div id="chartSpoil" class="chart"></div></div>
-      <div class="card"><div class="cardhead"><h2>per-agent reward</h2></div><div id="chartReward" class="chart"></div></div>
-    </section>
-
-    <section class="card area-agents">
-      <div class="cardhead"><h2>agent policies</h2><span class="hint">click a card for full detail</span></div>
-      <div id="agents" class="agents"></div>
-    </section>
-  </main>
-
-  <aside id="detail" class="detail" hidden>
-    <div class="detail-head">
-      <div>
-        <h2 id="detailName"></h2>
-        <span id="detailKind" class="detail-kind"></span>
-      </div>
-      <button id="detailClose" class="icon" title="close">✕</button>
-    </div>
-    <div id="detailBody" class="detail-body"></div>
-    <div class="detail-charts">
-      <div class="cardhead"><h2>reward history</h2></div>
-      <div id="detailChartReward" class="chart"></div>
-      <div class="cardhead"><h2>metric history</h2></div>
-      <div id="detailChartMetric" class="chart"></div>
-    </div>
-  </aside>
-
-  <script src="/static/app.js"></script>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>
