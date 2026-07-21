@@ -50,6 +50,13 @@ INVENTORY_STOCKOUT_WEIGHT = 0.5
 DELIVERY_DELAY_WEIGHT = 1.0
 DELIVERY_SLA_WEIGHT = 5.0
 DELIVERY_EMISSIONS_WEIGHT = 0.05
+# Honest-transit routes make a trip's raw carbon (~50) dominate the
+# self-normalising Pareto (weight a_j*value_j), swamping the delay/SLA slot
+# levers the agent actually controls — so it stops optimising them and loses to
+# random on slot_cost. Scale the (largely route-fixed, uncontrollable) carbon
+# onto the delay/SLA range so the Pareto reflects the slot decision, mirroring
+# INVENTORY_EMISSIONS_SCALE. The routing agent (Alg 1) owns emissions.
+DELIVERY_EMISSIONS_SCALE = 0.01
 DELIVERY_CONFLICT_PENALTY = 5.0
 
 RewardMethod = Callable[[], "tuple[float, dict[str, float]]"]
@@ -310,11 +317,12 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
     def _delivery_reward(self, i: int) -> tuple[float, dict[str, float]]:
         v = self._state.vehicles[i]
         conflict = DELIVERY_CONFLICT_PENALTY if v.conflict else 0.0
+        emissions = v.emissions * DELIVERY_EMISSIONS_SCALE
         weighted = _dynamic_pareto(
             [
                 (DELIVERY_DELAY_WEIGHT, v.delay),
                 (DELIVERY_SLA_WEIGHT, float(v.sla_violated)),
-                (DELIVERY_EMISSIONS_WEIGHT, v.emissions),
+                (DELIVERY_EMISSIONS_WEIGHT, emissions),
             ]
         )
         cost = weighted + conflict
