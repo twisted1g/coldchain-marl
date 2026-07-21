@@ -86,8 +86,43 @@ export function GraphView({ meta, tick, onHover, onUnhover }: Props) {
     const atNode: Record<string, number[]> = {};
     vehicles.forEach((v, i) => (atNode[v.current_node] ??= []).push(i));
 
+    // Draw each loaded truck's remaining road to its destination retailer so the
+    // journey is legible (the truck's shortest path = meta.restock_paths[dest],
+    // sliced from where it currently sits). Colored by agent, drawn under the
+    // markers.
     vehicles.forEach((v, i) => {
-      const p = pos[v.assigned_node];
+      if (v.carrying == null) return;
+      const full = meta.restock_paths?.[v.carrying];
+      if (!full || !full.length) return;
+      const at = full.indexOf(v.current_node);
+      const remaining = at >= 0 ? full.slice(at) : full;
+      const lx: (number | null)[] = [];
+      const ly: (number | null)[] = [];
+      for (let k = 0; k < remaining.length - 1; k++) {
+        const a = pos[remaining[k]];
+        const b = pos[remaining[k + 1]];
+        if (!a || !b) continue;
+        lx.push(a.x, b.x, null);
+        ly.push(a.y, b.y, null);
+      }
+      if (!lx.length) return;
+      traces.push({
+        x: lx,
+        y: ly,
+        mode: "lines",
+        type: "scatter",
+        hoverinfo: "skip",
+        line: { color: vehColor(i), width: 2.5 },
+        opacity: 0.5,
+      });
+    });
+
+    // Ring the retailer each loaded truck is actually delivering to (the order's
+    // retailer = retail_{carrying}), in that agent's color. Idle trucks carry no
+    // order, so no ring — the destination moves trip to trip.
+    vehicles.forEach((v, i) => {
+      if (v.carrying == null) return;
+      const p = pos[`retail_${v.carrying}`];
       if (!p) return;
       traces.push({
         x: [p.x],
@@ -122,31 +157,15 @@ export function GraphView({ meta, tick, onHover, onUnhover }: Props) {
           size: 15,
           symbol: "triangle-up",
           color: vehColor(i),
-          line: { width: 1.5, color: "#ffffff" },
+          // outline reddens with the crate's own spoilage risk (white if empty)
+          line: {
+            width: v.crate ? 2.5 : 1.5,
+            color: v.crate ? riskColor(v.crate.spoilage_risk) : "#ffffff",
+          },
         },
       });
     });
 
-    const ship = tick?.shipment;
-    if (ship && pos[ship.current_node]) {
-      traces.push({
-        x: [pos[ship.current_node].x],
-        y: [pos[ship.current_node].y],
-        mode: "markers",
-        type: "scatter",
-        hoverinfo: "text",
-        hovertext: [
-          `shipment · risk ${ship.spoilage_risk.toFixed(2)} · ` +
-            `fresh ${ship.freshness_score.toFixed(2)} · ${ship.sensor_temp.toFixed(1)}°C`,
-        ],
-        marker: {
-          size: 22,
-          symbol: "diamond",
-          color: riskColor(ship.spoilage_risk),
-          line: { width: 2.5, color: "#ffffff" },
-        },
-      });
-    }
     return traces;
   }, [meta, pos, tick]);
 

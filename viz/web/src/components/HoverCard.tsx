@@ -56,10 +56,30 @@ export function HoverCard({ target, pos, meta, tick }: Props) {
           delivery_{target.i}
           <span className="hc-badge">{status}</span>
         </div>
-        <Line k="serves" v={v.assigned_node} />
+        <Line
+          k="delivering to"
+          v={v.carrying == null ? "—" : `retail_${v.carrying}`}
+        />
         <Line k="at" v={v.current_node.replace("_", " ")} />
         <Line k="slot" v={v.chosen_slot} />
         <Line k="delay" v={`${v.delay.toFixed(2)}t`} />
+        {v.crate && (
+          <>
+            <Line k="crate temp" v={`${v.crate.sensor_temp.toFixed(1)}°C`} />
+            <Line k="setpoint" v={`${v.crate.desired_temp.toFixed(1)}°C`} />
+            <Line
+              k="spoilage"
+              v={
+                v.crate.spoilage_risk > 0.4 ? (
+                  <span className="tag bad">{v.crate.spoilage_risk.toFixed(2)}</span>
+                ) : (
+                  v.crate.spoilage_risk.toFixed(2)
+                )
+              }
+            />
+            <Line k="freshness" v={v.crate.freshness_score.toFixed(2)} />
+          </>
+        )}
         {(v.conflict || v.sla_violated) && (
           <Line
             k="flags"
@@ -84,8 +104,6 @@ export function HoverCard({ target, pos, meta, tick }: Props) {
   const inv = tick?.inventory;
   const showInv =
     kind === "retail" && inv && inst != null && inst < inv.levels.length;
-  const ship = tick?.shipment;
-  const hasShip = ship?.current_node === name;
 
   return (
     <div className="hovercard" style={style}>
@@ -110,14 +128,7 @@ export function HoverCard({ target, pos, meta, tick }: Props) {
           />
         </>
       )}
-      {hasShip && ship && (
-        <>
-          <Line k="cargo temp" v={`${ship.sensor_temp.toFixed(1)}°C`} />
-          <Line k="risk" v={ship.spoilage_risk.toFixed(2)} />
-          <Line k="fresh" v={ship.freshness_score.toFixed(2)} />
-        </>
-      )}
-      {!showInv && !hasShip && <div className="hc-row muted">no live state</div>}
+      {!showInv && <div className="hc-row muted">no live state</div>}
     </div>
   );
 }

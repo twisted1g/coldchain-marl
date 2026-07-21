@@ -54,6 +54,15 @@ export interface Vehicle {
   route_emissions: number;
   sla_window_ticks: number;
   emissions: number;
+  crate: Crate | null;
+}
+
+export interface Crate {
+  sensor_temp: number;
+  desired_temp: number;
+  sensor_humidity: number;
+  spoilage_risk: number;
+  freshness_score: number;
 }
 
 export interface Cargo {

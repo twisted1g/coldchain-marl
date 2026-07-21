@@ -5,6 +5,7 @@ import { GraphView } from "./components/GraphView";
 import type { HoverTarget } from "./components/GraphView";
 import { HoverCard } from "./components/HoverCard";
 import { InventoryPanel } from "./components/InventoryPanel";
+import { NegotiationPanel } from "./components/NegotiationPanel";
 import { SystemBar } from "./components/SystemBar";
 import { StepBar } from "./components/StepBar";
 import type { Episode, Tick } from "./types";
@@ -143,6 +144,7 @@ export function App() {
           />
           <div className="area-side">
             <InventoryPanel tick={tick} />
+            <NegotiationPanel tick={tick} />
           </div>
           <HoverCard
             target={hover?.target ?? null}
