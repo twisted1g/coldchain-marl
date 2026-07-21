@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 ARTIFACTS = Path(__file__).resolve().parent.parent / "artifacts"
@@ -77,11 +79,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        path = self.path.split("?", 1)[0]
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/" or path == "/index.html":
             self._send_file(WEB_DIR / "index.html")
         elif path.startswith("/static/"):
             self._send_file(WEB_DIR / path[len("/static/"):])
+        elif path == "/api/stream":
+            self._stream(parse_qs(parsed.query))
         elif path == "/api/episodes":
             self._send_json({"episodes": _list_episodes()})
         elif path.startswith("/api/episode/"):
@@ -108,25 +113,65 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(payload)
 
     def _run_episode(self, req: dict[str, Any]) -> dict[str, Any]:
-        from viz.record import record_episode
+        from viz.record import episode_name, record_episode, write_episode
 
         seed = int(req.get("seed", 90_000))
+        episodes = max(1, int(req.get("episodes", 1) or 1))
         tag = req.get("tag") or None
         scenario = req.get("scenario") or None
         max_steps = req.get("max_steps")
         max_steps = int(max_steps) if max_steps else None
+        mediator = req.get("mediator") or "off"
 
-        records = record_episode(seed, tag, scenario, max_steps)
-        name = f"episode_{seed}" + (f"_{tag}" if tag else "")
-        EPISODES_DIR.mkdir(parents=True, exist_ok=True)
-        out = EPISODES_DIR / f"{name}.jsonl"
-        with out.open("w") as f:
-            for rec in records:
-                f.write(json.dumps(rec) + "\n")
+        latest: dict[str, Any] = {}
+        for k in range(episodes):
+            records = record_episode(seed + k, tag, scenario, max_steps, mediator)
+            name = episode_name(seed + k, tag)
+            write_episode(records, EPISODES_DIR / f"{name}.jsonl")
+            meta = next(r for r in records if r["type"] == "meta")
+            ticks = [r for r in records if r["type"] == "tick"]
+            latest = {"name": name, "meta": meta, "ticks": ticks}
+        return latest
 
-        meta = next(r for r in records if r["type"] == "meta")
-        ticks = [r for r in records if r["type"] == "tick"]
-        return {"name": name, "meta": meta, "ticks": ticks}
+    def _stream(self, q: dict[str, list[str]]) -> None:
+        """Server-sent events: run a rolling live inference, one tick per event."""
+        from viz.live import DEFAULT_HORIZON, live_stream
+
+        def qint(key: str, default: int) -> int:
+            try:
+                return int(q.get(key, [""])[0])
+            except (ValueError, TypeError):
+                return default
+
+        seed = qint("seed", 90_000)
+        horizon = qint("horizon", DEFAULT_HORIZON)
+        max_steps = qint("max_steps", 0) or None
+        tag = (q.get("tag", [""])[0] or None)
+        mediator = q.get("mediator", ["llm"])[0] or "llm"
+        pace = max(0.0, float(q.get("pace", ["0.9"])[0] or 0.9))
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        try:
+            for rec in live_stream(seed, tag, horizon, max_steps, mediator):
+                self.wfile.write(f"data: {json.dumps(rec)}\n\n".encode())
+                self.wfile.flush()
+                time.sleep(pace)
+            self.wfile.write(b"event: end\ndata: {}\n\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception as exc:
+            try:
+                self.wfile.write(
+                    f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n".encode()
+                )
+                self.wfile.flush()
+            except OSError:
+                pass
 
 
 def main() -> None:

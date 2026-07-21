@@ -13,9 +13,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+import networkx as nx
+
 from core import config
 from core.world.fruits import get_params
 from env.training_env import ColdChainTrainingEnv
+from llm.mediation import build_mediator
 from training.config import ARTIFACTS, LEARNERS, env_config, load_agents
 
 
@@ -30,14 +33,27 @@ def _graph_meta(state: Any) -> dict[str, Any]:
         if not data["wait"]
     ]
     params = get_params(state.shipment.fruit_type)
+    # The restock fleet's transit cost is the weighted shortest path from the
+    # source farm to each retailer (see core.state retailer_transit). Ship that
+    # exact route so the dashboard glides trucks farm->hub->dc->retail along it
+    # instead of a straight line — same arrival, just the real path drawn.
+    source = state.shipment.current_node
+    retailers = sorted(
+        n for n, data in state.graph.nodes(data=True) if data["kind"] == "retail"
+    )
+    restock_paths = [
+        nx.shortest_path(state.graph, source, r, weight="base_transit_time")
+        for r in retailers
+    ]
     return {
         "type": "meta",
         "fruit": str(state.shipment.fruit_type),
-        "source": state.shipment.current_node,
+        "source": source,
         "target": state.shipment.target_node,
         "max_steps": state.max_steps,
         "nodes": nodes,
         "edges": edges,
+        "restock_paths": restock_paths,
         "thresholds": {
             "optimal_temp_low": params.optimal_temp_low_c,
             "optimal_temp_high": params.optimal_temp_high_c,
@@ -103,11 +119,13 @@ def _tick_record(
             {
                 "vehicle": c.vehicle,
                 "instance": c.instance,
+                "departure_tick": c.departure_tick,
                 "arrival_tick": c.arrival_tick,
                 "qty": float(c.qty),
             }
             for c in state.cargo
         ],
+        "order_queue": [[int(i), float(q)] for i, q in state.order_queue],
         "vehicles": [
             {
                 "assigned_node": v.assigned_node,
@@ -116,6 +134,8 @@ def _tick_record(
                 "delay": float(v.delay),
                 "sla_violated": bool(v.sla_violated),
                 "conflict": bool(v.conflict),
+                "current_node": v.current_node,
+                "carrying": (v.carrying.instance if v.carrying is not None else None),
             }
             for v in state.vehicles
         ],
@@ -133,51 +153,88 @@ def record_episode(
     tag: str | None,
     scenario_id: str | None,
     max_steps: int | None,
+    mediator: str | None = None,
 ) -> list[dict[str, Any]]:
     cfg = env_config(base_seed=seed, learners=LEARNERS)
     if max_steps is not None:
         cfg["max_steps"] = max_steps
     env = ColdChainTrainingEnv(cfg)
     agents = load_agents(env, LEARNERS, tag)
+    mediate = build_mediator(mediator)
 
     options = {"scenario_id": scenario_id} if scenario_id else None
     obs, _ = env.reset(options=options)
 
-    records: list[dict[str, Any]] = [_graph_meta(env.world_state)]
+    meta = _graph_meta(env.world_state)
+    meta["mediator"] = mediator if mediate is not None else "off"
+    records: list[dict[str, Any]] = [meta]
     records.append(_tick_record(env.world_state, {}, {}, {}))
 
-    done = False
-    while not done:
-        actions = {a: agents[a].act(obs[a], explore=False) for a in agents}
-        obs, rewards, terminated, truncated, infos = env.step(actions)
-        records.append(_tick_record(env.world_state, rewards, actions, infos))
-        done = terminated["__all__"] or truncated["__all__"]
+    try:
+        done = False
+        while not done:
+            actions = {a: agents[a].act(obs[a], explore=False) for a in agents}
+            if mediate is not None:
+                actions = mediate.resolve(actions, env.world_state)
+            obs, rewards, terminated, truncated, infos = env.step(actions)
+            rec = _tick_record(env.world_state, rewards, actions, infos)
+            if mediate is not None:
+                rec["negotiations"] = mediate.last_events
+            records.append(rec)
+            done = terminated["__all__"] or truncated["__all__"]
+    finally:
+        if mediate is not None:
+            mediate.close()
     return records
+
+
+def write_episode(records: list[dict[str, Any]], out: Path) -> int:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w") as f:
+        for rec in records:
+            f.write(json.dumps(rec) + "\n")
+    return sum(1 for r in records if r["type"] == "tick")
+
+
+def episode_name(seed: int, tag: str | None) -> str:
+    return f"episode_{seed}" + (f"_{tag}" if tag else "")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=90_000)
+    parser.add_argument("--episodes", type=int, default=1,
+                        help="record N consecutive seeds (seed, seed+1, ...)")
     parser.add_argument("--tag", default=None, help="module variant, e.g. scn05")
     parser.add_argument("--scenario", default=None, help="LLM scenario id (needs bank)")
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument(
+        "--mediator",
+        default="off",
+        choices=["off", "greedy", "llm"],
+        help="resolve delivery-slot conflicts (Alg 6) before each step",
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=None,
-        help="output JSONL (default artifacts/episodes/<seed>.jsonl)",
+        help="output JSONL (single episode only; default artifacts/episodes/<name>.jsonl)",
     )
     args = parser.parse_args()
 
-    records = record_episode(args.seed, args.tag, args.scenario, args.max_steps)
-
-    out = args.out or ARTIFACTS / "episodes" / f"episode_{args.seed}.jsonl"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w") as f:
-        for rec in records:
-            f.write(json.dumps(rec) + "\n")
-    ticks = sum(1 for r in records if r["type"] == "tick")
-    print(f"wrote {ticks} ticks -> {out}")
+    episodes_dir = ARTIFACTS / "episodes"
+    for k in range(args.episodes):
+        seed = args.seed + k
+        records = record_episode(
+            seed, args.tag, args.scenario, args.max_steps, args.mediator
+        )
+        out = (
+            args.out
+            if args.out is not None and args.episodes == 1
+            else episodes_dir / f"{episode_name(seed, args.tag)}.jsonl"
+        )
+        ticks = write_episode(records, out)
+        print(f"wrote {ticks} ticks -> {out}")
 
 
 if __name__ == "__main__":
