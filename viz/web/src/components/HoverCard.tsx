@@ -19,7 +19,7 @@ function instanceOf(name: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-function Line({ k, v }: { k: string; v: ReactNode }) {
+function Line({ k, v }: { k: ReactNode; v: ReactNode }) {
   return (
     <div className="hc-row">
       <span className="hc-k">{k}</span>
@@ -105,6 +105,14 @@ export function HoverCard({ target, pos, meta, tick }: Props) {
   const showInv =
     kind === "retail" && inv && inst != null && inst < inv.levels.length;
 
+  // Trucks parked on this node right now, with what they carry. Gives every node
+  // — farm/hub/dc included — live content instead of a bare "no live state".
+  const here = (tick?.vehicles ?? [])
+    .map((v, i) => ({ v, i }))
+    .filter(({ v }) => v.current_node === name);
+
+  const hasState = showInv || here.length > 0;
+
   return (
     <div className="hovercard" style={style}>
       <div className="hc-head">
@@ -128,7 +136,32 @@ export function HoverCard({ target, pos, meta, tick }: Props) {
           />
         </>
       )}
-      {!showInv && <div className="hc-row muted">no live state</div>}
+      {here.map(({ v, i }) => (
+        <Line
+          key={i}
+          k={
+            <>
+              <span className="swatch" style={{ background: vehColor(i) }} />
+              delivery_{i}
+            </>
+          }
+          v={
+            v.carrying == null ? (
+              "empty"
+            ) : (
+              <>
+                crate → retail_{v.carrying}
+                {v.crate && v.crate.spoilage_risk > 0.4 && (
+                  <span className="tag bad" style={{ marginLeft: 4 }}>
+                    {v.crate.spoilage_risk.toFixed(2)}
+                  </span>
+                )}
+              </>
+            )
+          }
+        />
+      ))}
+      {!hasState && <div className="hc-row muted">no traffic</div>}
     </div>
   );
 }
