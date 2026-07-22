@@ -5,6 +5,8 @@ import { GraphView } from "./components/GraphView";
 import type { HoverTarget } from "./components/GraphView";
 import { HoverCard } from "./components/HoverCard";
 import { InventoryPanel } from "./components/InventoryPanel";
+import { AgentsPanel } from "./components/AgentsPanel";
+import { CargoPanel } from "./components/CargoPanel";
 import { NegotiationPanel } from "./components/NegotiationPanel";
 import { SystemBar } from "./components/SystemBar";
 import { StepBar } from "./components/StepBar";
@@ -142,10 +144,12 @@ export function App() {
             onHover={(target, x, y) => setHover({ target, x, y })}
             onUnhover={() => setHover(null)}
           />
+          <CargoPanel tick={tick} />
           <div className="area-side">
             <InventoryPanel tick={tick} />
             <NegotiationPanel tick={tick} />
           </div>
+          <AgentsPanel tick={tick} />
           <HoverCard
             target={hover?.target ?? null}
             pos={hover ? { x: hover.x, y: hover.y } : null}

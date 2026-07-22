@@ -281,7 +281,14 @@ def _advance_vehicles(state: GlobalState) -> None:
     """Move each in-transit truck one graph edge at a time. A truck waits at the
     depot until its slot window opens (``departure_tick``), then consumes each
     edge's ``base_transit_time`` in ticks; on reaching the retailer it delivers
-    (crediting inventory) and returns to the depot."""
+    (crediting inventory), is shown parked at the retailer for that tick, and
+    snaps back to the depot on the next tick (the deferred/instant return)."""
+    # Deferred return: an idle truck left at its retailer last tick goes home now
+    # so the arrival is visible for one frame. ``current_node`` is viz-only (no
+    # obs reads it), so this never touches training.
+    for vehicle in state.vehicles:
+        if vehicle.carrying is None and vehicle.current_node != state.depot:
+            vehicle.current_node = state.depot
     for vehicle in state.vehicles:
         cargo = vehicle.carrying
         if cargo is None or state.tick < cargo.departure_tick or not vehicle.route:
@@ -306,7 +313,8 @@ def _deliver_vehicle(state: GlobalState, vehicle: VehicleState) -> None:
     vehicle.carrying = None
     vehicle.load = None  # crate delivered
     vehicle.busy_until = state.tick
-    vehicle.current_node = state.depot  # deferred/instant return trip
+    # Leave the truck parked at the retailer this tick so the arrival is visible;
+    # ``_advance_vehicles`` returns it to the depot next tick.
     vehicle.route = []
     vehicle.edge_ticks_left = 0
 

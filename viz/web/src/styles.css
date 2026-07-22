@@ -116,7 +116,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .area-graph { grid-area: graph; }
 .area-side { grid-area: side; display: flex; flex-direction: column; gap: 14px; }
-.area-charts { grid-area: charts; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.area-charts { grid-area: charts; }
 .area-agents { grid-area: agents; }
 .empty { padding: 60px; text-align: center; color: var(--muted); }
 
@@ -177,8 +177,11 @@ button:disabled { opacity: 0.5; cursor: default; }
 .agentcard { border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 8px; padding: 8px 10px; }
 .ac-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
 .ac-name { font-weight: 600; font-size: 12px; }
-.ac-body { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 11px; }
+.ac-body { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 11px; }
 .ac-body b { color: var(--ink); font-family: "JetBrains Mono", monospace; }
+.ac-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.ac-row b.goodval { color: var(--good); }
+.ac-row b.warnval { color: var(--bad); }
 
 /* ---------- hover card ---------- */
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
