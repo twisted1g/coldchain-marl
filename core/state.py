@@ -127,6 +127,12 @@ class GlobalState:
     route_emissions: float
     spoilage_prediction: float
     vehicles: list[VehicleState]
+    # Per-node micro-climate: each node's own storage temperature/humidity, drifting
+    # within a kind-specific band. node_climate_rng isolates this noise so the demand
+    # and disruption streams stay bit-identical.
+    node_temp_c: dict[str, float]
+    node_humidity: dict[str, float]
+    node_climate_rng: np.random.Generator
     # When set, a delivered shipment respawns instead of ending the episode, so
     # the world rolls on and restock trucks complete real multi-tick trips.
     rolling: bool = False
@@ -209,6 +215,11 @@ def init_state(
     depot = source
     retailer_costs = [_route_cost(graph, depot, r) for r in retailers]
 
+    node_climate_rng = np.random.default_rng(
+        base_seed + config.NODE_CLIMATE_RNG_OFFSET
+    )
+    node_temp_c, node_humidity = _init_node_climate(graph, node_climate_rng)
+
     return GlobalState(
         tick=0,
         max_steps=n_steps,
@@ -245,8 +256,29 @@ def init_state(
         route_emissions=0.0,
         spoilage_prediction=0.0,
         vehicles=_init_vehicles(retailers, retailer_costs, n_steps, depot),
+        node_temp_c=node_temp_c,
+        node_humidity=node_humidity,
+        node_climate_rng=node_climate_rng,
         rolling=rolling,
     )
+
+
+def _init_node_climate(
+    graph: nx.DiGraph, rng: np.random.Generator
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Seed each node at its kind setpoint (temp jittered, humidity at target),
+    clamped to the kind band. Nodes then drift via ``_advance_node_climate``."""
+    temps: dict[str, float] = {}
+    humidity: dict[str, float] = {}
+    for node, data in graph.nodes(data=True):
+        kind = data["kind"]
+        lo, hi = config.NODE_CLIMATE_BAND_C[kind]
+        seed_t = config.NODE_CLIMATE_SETPOINT_C[kind] + float(
+            rng.normal(0.0, config.NODE_CLIMATE_TEMP_SIGMA)
+        )
+        temps[node] = float(np.clip(seed_t, lo, hi))
+        humidity[node] = config.NODE_CLIMATE_HUMIDITY[kind]
+    return temps, humidity
 
 
 def _redraw_demand(

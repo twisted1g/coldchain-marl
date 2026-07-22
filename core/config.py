@@ -82,6 +82,43 @@ HUMIDITY_NOISE_SIGMA: Final[float] = 0.03
 HUMIDITY_SEVERITY_SCALE: Final[float] = 0.3
 DELAY_RISK_FACTOR: Final[float] = 0.5
 
+# Per-node micro-climate. Each node holds its own storage temperature/humidity,
+# mean-reverting toward a kind-specific setpoint and pulled toward ambient with a
+# kind-specific strength (cold rooms are well-refrigerated, so their ambient pull
+# is tiny), hard-clamped to a physically plausible band. This is the external
+# environment a load fights: node_climate[current_node] drives crate/shipment
+# thermal + energy, and feeds the spoilage GNN so its "risk across nodes" reasons
+# over real per-node conditions (paper Table 1: spoilage input is per-node T/H +
+# location) instead of flat ambient copies.
+NODE_CLIMATE_SETPOINT_C: Final[dict[str, float]] = {
+    "farm": 20.0,  # open-air handling, tracks ambient
+    "hub": 11.0,  # cool cross-dock
+    "dc": 3.0,  # refrigerated cold room
+    "retail": 5.0,  # display chiller
+}
+NODE_CLIMATE_BAND_C: Final[dict[str, tuple[float, float]]] = {
+    "farm": (5.0, 30.0),
+    "hub": (8.0, 14.0),
+    "dc": (0.0, 6.0),
+    "retail": (2.0, 8.0),
+}
+NODE_CLIMATE_HUMIDITY: Final[dict[str, float]] = {
+    "farm": 0.70,
+    "hub": 0.80,
+    "dc": 0.90,
+    "retail": 0.85,
+}
+NODE_CLIMATE_AMBIENT_PULL: Final[dict[str, float]] = {
+    "farm": 0.15,  # open air, follows outside temperature
+    "hub": 0.05,
+    "dc": 0.01,  # sealed cold room, barely feels ambient
+    "retail": 0.02,
+}
+NODE_CLIMATE_REVERSION: Final[float] = 0.2  # pull toward the kind setpoint
+NODE_CLIMATE_TEMP_SIGMA: Final[float] = 0.25  # mean-reverting temp noise (deg C)
+NODE_CLIMATE_HUMIDITY_SIGMA: Final[float] = 0.02
+NODE_CLIMATE_RNG_OFFSET: Final[int] = 777  # isolate climate noise from other streams
+
 
 class DisruptionType(StrEnum):
     BLOCKED_NODE = "blocked_node"

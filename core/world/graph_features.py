@@ -42,8 +42,12 @@ def spoilage_node_features(state: GlobalState) -> np.ndarray:
     rows: list[list[float]] = []
     for node in node_order(state.graph):
         if node == s.current_node:
+            # the crate is being measured here — show its sensor reading
             temp, hum = s.sensor_temperature_c, s.sensor_humidity
         else:
-            temp, hum = state.ambient_temp_c, state.ambient_humidity
+            # every other node shows its own storage micro-climate (Design F),
+            # so the GNN reasons over real per-node conditions, not ambient copies
+            temp = state.node_temp_c.get(node, state.ambient_temp_c)
+            hum = state.node_humidity.get(node, state.ambient_humidity)
         rows.append([temp, hum, node_delay(state, node), fruit])
     return np.array(rows, dtype=np.float32)

@@ -47,6 +47,7 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     _apply_spoilage_action(state, actions.get("spoilage"))
 
     _advance_vehicles(state)
+    _advance_node_climate(state)
     _advance_thermal_state(state)
     _advance_humidity(state)
     _advance_spoilage(state)
@@ -344,10 +345,41 @@ def _apply_spoilage_action(state: GlobalState, action: Any) -> None:
     state.spoilage_prediction = float(np.clip(value, 0.0, 1.0))
 
 
+def _advance_node_climate(state: GlobalState) -> None:
+    """Drift each node's storage temperature/humidity: mean-revert toward the kind
+    setpoint, pull weakly toward ambient (kind-specific strength), add small noise,
+    and hard-clamp to the kind band. Uses the isolated climate rng so demand and
+    disruption streams stay bit-identical."""
+    rng = state.node_climate_rng
+    for node, data in state.graph.nodes(data=True):
+        kind = data["kind"]
+        set_c = config.NODE_CLIMATE_SETPOINT_C[kind]
+        lo, hi = config.NODE_CLIMATE_BAND_C[kind]
+        pull = config.NODE_CLIMATE_AMBIENT_PULL[kind]
+        t = state.node_temp_c[node]
+        t += config.NODE_CLIMATE_REVERSION * (set_c - t)
+        t += pull * (state.ambient_temp_c - t)
+        t += float(rng.normal(0.0, config.NODE_CLIMATE_TEMP_SIGMA))
+        state.node_temp_c[node] = float(np.clip(t, lo, hi))
+
+        h_set = config.NODE_CLIMATE_HUMIDITY[kind]
+        h = state.node_humidity[node]
+        h += config.NODE_CLIMATE_REVERSION * (h_set - h)
+        h += float(rng.normal(0.0, config.NODE_CLIMATE_HUMIDITY_SIGMA))
+        state.node_humidity[node] = float(np.clip(h, 0.0, 1.0))
+
+
+def _node_external_temp(state: GlobalState, node: str) -> float:
+    """External temperature a load at ``node`` fights — the node's own storage
+    climate (Design F). Falls back to ambient if the node has no climate entry."""
+    return state.node_temp_c.get(node, state.ambient_temp_c)
+
+
 def _advance_thermal_state(state: GlobalState) -> None:
     s = state.shipment
     diff = s.desired_temperature_c - s.sensor_temperature_c
-    ambient_pull = (state.ambient_temp_c - s.sensor_temperature_c) * 0.05
+    external = _node_external_temp(state, s.current_node)
+    ambient_pull = (external - s.sensor_temperature_c) * 0.05
     s.sensor_temperature_c = s.sensor_temperature_c + 0.5 * diff + ambient_pull
 
 
@@ -409,10 +441,11 @@ def _advance_loads(state: GlobalState) -> None:
         if not (cargo.departure_tick <= state.tick < cargo.arrival_tick):
             continue
         crate.current_node = vehicle.current_node
-        # thermal relaxation toward the setpoint plus ambient pull (mirrors the
-        # singleton ``_advance_thermal_state``, deterministic)
+        # thermal relaxation toward the setpoint plus a pull toward the crate's
+        # local node climate (Design F — the facility it sits in), deterministic
+        external = _node_external_temp(state, crate.current_node)
         diff = crate.desired_temperature_c - crate.sensor_temperature_c
-        ambient_pull = (state.ambient_temp_c - crate.sensor_temperature_c) * 0.05
+        ambient_pull = (external - crate.sensor_temperature_c) * 0.05
         crate.sensor_temperature_c += 0.5 * diff + ambient_pull
         # humidity relaxes to ambient without the rng noise term (noise would
         # desync the shared stream)
@@ -464,7 +497,8 @@ def _maybe_sample_disruption(state: GlobalState) -> None:
 
 def _update_energy(state: GlobalState) -> None:
     s = state.shipment
-    diff = abs(s.sensor_temperature_c - state.ambient_temp_c)
+    external = _node_external_temp(state, s.current_node)
+    diff = abs(s.sensor_temperature_c - external)
     state.energy_usage = diff * 0.1
 
 
