@@ -23,16 +23,19 @@ const INK = "#1e293b";
 const VEHICLE_COLOR = ["#2563eb", "#0891b2", "#7c3aed", "#db2777", "#ca8a04"];
 const vehColor = (i: number) => VEHICLE_COLOR[i % VEHICLE_COLOR.length];
 
-/** Green (fresh) -> red (spoiled) along a spoilage risk in [0,1]. */
+/** Green (fresh) -> red (spoiled) along a spoilage risk in [0,1]. Vivid and fully
+ *  opaque so the crate's condition reads at a glance. */
 function riskColor(r: number): string {
   const hue = (1 - Math.max(0, Math.min(1, r))) * 120;
-  return `hsl(${hue}, 65%, 48%)`;
+  return `hsl(${hue}, 90%, 45%)`;
 }
 
 /**
  * System topology: farm -> hub -> DC -> retail laid out in columns, edges as the
- * physical links, the live cold-chain shipment as a risk-colored diamond, and a
- * ring around its target retailer. Node overlays (fleet, cargo) live elsewhere.
+ * physical links. Each delivery truck is a triangle in its agent's hue; a loaded
+ * truck carries a square crate badge coloured by spoilage risk, and its live
+ * destination retailer wears a matching ring. No route line is drawn — the
+ * dynamic-assignment target can change trip to trip, so a fixed path misleads.
  */
 export function GraphView({ meta, tick, onHover, onUnhover }: Props) {
   const pos = useMemo(() => nodePositions(meta), [meta]);
@@ -86,37 +89,6 @@ export function GraphView({ meta, tick, onHover, onUnhover }: Props) {
     const atNode: Record<string, number[]> = {};
     vehicles.forEach((v, i) => (atNode[v.current_node] ??= []).push(i));
 
-    // Draw each loaded truck's remaining road to its destination retailer so the
-    // journey is legible (the truck's shortest path = meta.restock_paths[dest],
-    // sliced from where it currently sits). Colored by agent, drawn under the
-    // markers.
-    vehicles.forEach((v, i) => {
-      if (v.carrying == null) return;
-      const full = meta.restock_paths?.[v.carrying];
-      if (!full || !full.length) return;
-      const at = full.indexOf(v.current_node);
-      const remaining = at >= 0 ? full.slice(at) : full;
-      const lx: (number | null)[] = [];
-      const ly: (number | null)[] = [];
-      for (let k = 0; k < remaining.length - 1; k++) {
-        const a = pos[remaining[k]];
-        const b = pos[remaining[k + 1]];
-        if (!a || !b) continue;
-        lx.push(a.x, b.x, null);
-        ly.push(a.y, b.y, null);
-      }
-      if (!lx.length) return;
-      traces.push({
-        x: lx,
-        y: ly,
-        mode: "lines",
-        type: "scatter",
-        hoverinfo: "skip",
-        line: { color: vehColor(i), width: 2.5 },
-        opacity: 0.5,
-      });
-    });
-
     // Ring the retailer each loaded truck is actually delivering to (the order's
     // retailer = retail_{carrying}), in that agent's color. Idle trucks carry no
     // order, so no ring — the destination moves trip to trip.
@@ -146,6 +118,10 @@ export function GraphView({ meta, tick, onHover, onUnhover }: Props) {
       const group = atNode[v.current_node] ?? [i];
       const k = group.indexOf(i);
       const p = { x: base.x - k * 0.055, y: base.y };
+      const loaded = v.crate != null;
+      // Truck glyph: filled triangle in the agent's hue, fully opaque. Empty trucks
+      // are smaller with a thin grey outline; loaded trucks are larger so cargo
+      // motion stands out.
       traces.push({
         x: [p.x],
         y: [p.y],
@@ -154,16 +130,33 @@ export function GraphView({ meta, tick, onHover, onUnhover }: Props) {
         hoverinfo: "none",
         customdata: [{ t: "veh", i }] as unknown as number[],
         marker: {
-          size: 15,
+          size: loaded ? 18 : 12,
           symbol: "triangle-up",
           color: vehColor(i),
-          // outline reddens with the crate's own spoilage risk (white if empty)
-          line: {
-            width: v.crate ? 2.5 : 1.5,
-            color: v.crate ? riskColor(v.crate.spoilage_risk) : "#ffffff",
-          },
+          line: { width: 1.5, color: loaded ? "#ffffff" : "#94a3b8" },
         },
       });
+      // Crate badge: an amber box floating above a loaded truck. Amber is a fixed
+      // cargo colour that never matches a node hue (green/blue/amber-dc/pink), so a
+      // crate is always legible against the network. Its spoilage risk shows as the
+      // frame colour (green fresh -> red spoiled). Shape + colour make the cargo —
+      // and its condition — the most distinct thing moving.
+      if (loaded && v.crate) {
+        traces.push({
+          x: [p.x],
+          y: [p.y - 0.06],
+          mode: "markers",
+          type: "scatter",
+          hoverinfo: "none",
+          customdata: [{ t: "veh", i }] as unknown as number[],
+          marker: {
+            size: 16,
+            symbol: "square",
+            color: "#f59e0b",
+            line: { width: 3.5, color: riskColor(v.crate.spoilage_risk) },
+          },
+        });
+      }
     });
 
     return traces;
