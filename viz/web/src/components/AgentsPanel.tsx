@@ -61,45 +61,60 @@ interface Card {
  * Bottom strip of MARL agent status cards — one per logical agent group. Each
  * card shows the group's live summed reward, its instance count, and the two or
  * three headline metrics from that agent's `info` dict. Collapsing the four
- * inventory / three delivery instances into a single card keeps it reading as the
- * paper's five cooperating agents rather than ten scattered policies.
+ * per-vehicle routing/temperature/spoilage, four inventory and three delivery
+ * instances into one card each keeps it reading as the paper's five cooperating
+ * agents rather than sixteen scattered policies.
  */
 export function AgentsPanel({ tick }: Props) {
   if (!tick) return null;
   const { rewards, infos } = tick;
 
+  // routing / temperature / spoilage are now one policy instance per vehicle
+  // (singleton eliminated). Idle trucks report zeroed info, so the per-crate
+  // metrics average over the trucks actually carrying a crate.
+  const nVeh = tick.vehicles.length;
+  const active = Math.max(1, tick.vehicles.filter((v) => v.crate != null).length);
+
   const cards: Card[] = [
     {
       name: "temperature",
       accent: "#0891b2",
-      count: 1,
+      count: nVeh,
       reward: sumReward(rewards, "temperature"),
       rows: [
-        { k: "Δ temp", v: `${(infos.temperature?.temp_deviation ?? 0).toFixed(3)}` },
-        { k: "energy", v: `${(infos.temperature?.energy_usage ?? 0).toFixed(2)}` },
+        {
+          k: "Δ temp",
+          v: `${(sumInfo(infos, "temperature", "temp_deviation") / active).toFixed(3)}`,
+        },
       ],
     },
     {
       name: "routing",
       accent: "#2563eb",
-      count: 1,
+      count: nVeh,
       reward: sumReward(rewards, "routing"),
       rows: [
-        { k: "route cost", v: `${(infos.routing?.route_cost ?? 0).toFixed(2)}` },
-        { k: "delivered", v: `${(infos.routing?.delivered ?? 0).toFixed(0)}` },
+        {
+          k: "route cost",
+          v: `${sumInfo(infos, "routing", "route_cost").toFixed(2)}`,
+        },
+        { k: "delivered", v: `${sumInfo(infos, "routing", "delivered").toFixed(0)}` },
       ],
     },
     {
       name: "spoilage",
       accent: "#16a34a",
-      count: 1,
+      count: nVeh,
       reward: sumReward(rewards, "spoilage"),
       rows: [
-        { k: "predict", v: `${(infos.spoilage?.y_pred ?? 0).toFixed(2)}` },
+        {
+          k: "predict",
+          v: `${(sumInfo(infos, "spoilage", "y_pred") / active).toFixed(2)}`,
+        },
         {
           k: "FN rate",
-          v: `${(infos.spoilage?.fn_rate ?? 0).toFixed(2)}`,
-          bad: (infos.spoilage?.fn_rate ?? 0) > 0.01,
+          v: `${sumInfo(infos, "spoilage", "fn_rate").toFixed(2)}`,
+          bad: sumInfo(infos, "spoilage", "fn_rate") > 0.01,
         },
       ],
     },

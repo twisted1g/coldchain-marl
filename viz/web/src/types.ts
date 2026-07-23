@@ -37,17 +37,6 @@ export interface Meta {
   mediator?: string;
 }
 
-export interface Shipment {
-  current_node: string;
-  target_node: string;
-  age_ticks: number;
-  spoilage_risk: number;
-  freshness_score: number;
-  sensor_temp: number;
-  desired_temp: number;
-  sensor_humidity: number;
-}
-
 export interface Vehicle {
   assigned_node: string;
   chosen_slot: number;
@@ -105,10 +94,8 @@ export interface NegotiationEvent {
 export interface Tick {
   type: "tick";
   tick: number;
-  shipment_no?: number;
   actions: Record<string, unknown>;
   infos: Record<string, Record<string, number>>;
-  shipment: Shipment;
   ambient: { weather: string; temp: number; humidity: number };
   node_climate?: Record<string, NodeClimate>;
   calendar: { day_of_year: number; weekday: number; event_multiplier: number };
@@ -117,8 +104,6 @@ export interface Tick {
   order_queue: [number, number][];
   vehicles: Vehicle[];
   disruptions: { type: string; target: string }[];
-  spoilage_prediction: number;
-  energy_usage: number;
   rewards: Record<string, number>;
   negotiations?: NegotiationEvent[];
 }
