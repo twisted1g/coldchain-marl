@@ -183,6 +183,10 @@ def _tick_record(
                         "sensor_humidity": float(v.load.sensor_humidity),
                         "spoilage_risk": float(v.load.spoilage_risk),
                         "freshness_score": float(v.load.freshness_score),
+                        # per-crate spoilage forecast (decentralised spoilage policy)
+                        "spoilage_prediction": float(v.load.spoilage_prediction),
+                        # per-crate route the routing policy chose (Alg 1)
+                        "route_plan": list(v.load.route_plan),
                     }
                     if v.load is not None
                     else None
@@ -234,6 +238,80 @@ def _drive_crate_setpoints(state: Any, agents: dict[str, Any]) -> None:
         )
 
 
+def _drive_crate_spoilage(state: Any, agents: dict[str, Any]) -> None:
+    """CTDE decentralized execution: run the trained spoilage GNN policy on each
+    truck-borne crate to predict ITS spoilage probability (paper Alg 3 / Section
+    4.2 — the edge policy forecasts per crate at inference). Stored on the crate
+    for the dashboard; training still predicts the singleton shipment."""
+    policy = agents.get("spoilage")
+    if policy is None:
+        return
+    from core.interfaces.observations import crate_spoilage_obs
+
+    for vehicle in state.vehicles:
+        crate = vehicle.load
+        if crate is None:
+            continue
+        action = policy.act(crate_spoilage_obs(state, crate), explore=False)
+        value = float(np.asarray(action).flatten()[0])
+        crate.spoilage_prediction = float(min(max(value, 0.0), 1.0))
+
+
+def _greedy_route(
+    state: Any, policy: Any, start: str, target: str, crate: Any, max_hops: int = 12
+) -> list[str]:
+    """Roll the routing policy forward per crate from ``start`` to its ``target``,
+    picking one hop at a time on the crate's own routing obs (paper Alg 1 dynamic
+    path selection). Falls back to the weighted shortest path if the greedy walk
+    loops or dead-ends, so the crate always reaches its retailer."""
+    from core.interfaces.observations import crate_routing_obs
+
+    node = start
+    path: list[str] = []
+    visited = {start}
+    for _ in range(max_hops):
+        if node == target:
+            return path
+        edges = list(state.graph.out_edges(node, data=True))
+        if not edges:
+            break
+        action = policy.act(crate_routing_obs(state, crate, node), explore=False)
+        idx = int(np.asarray(action).flatten()[0]) % len(edges)
+        nxt = edges[idx][1]
+        if nxt == node:  # wait action — no progress
+            continue
+        if nxt in visited:  # loop — bail to the shortest-path fallback
+            break
+        path.append(nxt)
+        visited.add(nxt)
+        node = nxt
+    try:
+        return nx.shortest_path(
+            state.graph, start, target, weight="base_transit_time"
+        )[1:]
+    except nx.NetworkXNoPath:
+        return [target]
+
+
+def _drive_crate_routes(state: Any, agents: dict[str, Any]) -> None:
+    """CTDE decentralized execution: each loaded truck's crate is routed toward its
+    own retailer by the trained routing policy (paper Alg 1 — one routing agent per
+    crate). Re-planned whenever the truck sits at a node, so it adapts to node
+    climate / disruptions; skipped mid-edge. Training keeps the shortest path."""
+    policy = agents.get("routing")
+    if policy is None:
+        return
+    for vehicle in state.vehicles:
+        crate = vehicle.load
+        if crate is None or vehicle.edge_ticks_left > 0:
+            continue
+        plan = _greedy_route(
+            state, policy, vehicle.current_node, crate.target_node, crate
+        )
+        vehicle.route = plan
+        crate.route_plan = [vehicle.current_node, *plan]
+
+
 def run_inference(
     seed: int,
     tag: str | None = None,
@@ -266,6 +344,8 @@ def run_inference(
             obs, rewards, _terminated, _truncated, infos = env.step(actions)
             state = env.world_state
             _drive_crate_setpoints(state, agents)
+            _drive_crate_spoilage(state, agents)
+            _drive_crate_routes(state, agents)
 
             rec = _tick_record(state, rewards, actions, infos)
             rec["shipment_no"] = shipment_no

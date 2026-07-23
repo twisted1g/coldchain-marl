@@ -70,6 +70,8 @@ export interface Crate {
   sensor_humidity: number;
   spoilage_risk: number;
   freshness_score: number;
+  spoilage_prediction?: number;
+  route_plan?: string[];
 }
 
 export interface Cargo {

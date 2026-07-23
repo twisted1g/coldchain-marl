@@ -78,6 +78,12 @@ export function HoverCard({ target, pos, meta, tick }: Props) {
               }
             />
             <Line k="freshness" v={v.crate.freshness_score.toFixed(2)} />
+            {v.crate.spoilage_prediction != null && (
+              <Line
+                k="predicted"
+                v={v.crate.spoilage_prediction.toFixed(2)}
+              />
+            )}
           </>
         )}
         {(v.conflict || v.sla_violated) && (

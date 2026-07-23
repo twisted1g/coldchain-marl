@@ -104,6 +104,33 @@ export function GraphView({ meta, tick, onHover, onUnhover }: Props) {
     const atNode: Record<string, number[]> = {};
     vehicles.forEach((v, i) => (atNode[v.current_node] ??= []).push(i));
 
+    // Draw each loaded crate's policy-chosen route (Alg 1 per-crate routing) as a
+    // faint dashed line in the vehicle's hue. Unlike the old shortest-path lines,
+    // this is the actual plan to the crate's own fixed target — not misleading.
+    vehicles.forEach((v, i) => {
+      const plan = v.crate?.route_plan;
+      if (!plan || plan.length < 2) return;
+      const lx: (number | null)[] = [];
+      const ly: (number | null)[] = [];
+      for (let k = 0; k < plan.length - 1; k++) {
+        const a = pos[plan[k]];
+        const b = pos[plan[k + 1]];
+        if (!a || !b) continue;
+        lx.push(a.x, b.x, null);
+        ly.push(a.y, b.y, null);
+      }
+      if (!lx.length) return;
+      traces.push({
+        x: lx,
+        y: ly,
+        mode: "lines",
+        type: "scatter",
+        hoverinfo: "skip",
+        line: { color: vehColor(i), width: 1.5, dash: "dot" },
+        opacity: 0.55,
+      });
+    });
+
     // Ring the retailer each loaded truck is actually delivering to (the order's
     // retailer = retail_{carrying}), in that agent's color. Idle trucks carry no
     // order, so no ring — the destination moves trip to trip.

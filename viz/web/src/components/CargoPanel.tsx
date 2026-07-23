@@ -47,6 +47,7 @@ export function CargoPanel({ tick }: Props) {
               <th>setpoint</th>
               <th>Δ</th>
               <th>spoilage</th>
+              <th>pred</th>
               <th>freshness</th>
             </tr>
           </thead>
@@ -71,6 +72,11 @@ export function CargoPanel({ tick }: Props) {
                     <span className={`tag ${riskCls(c.spoilage_risk)}`}>
                       {c.spoilage_risk.toFixed(2)}
                     </span>
+                  </td>
+                  <td>
+                    {c.spoilage_prediction != null
+                      ? c.spoilage_prediction.toFixed(2)
+                      : "—"}
                   </td>
                   <td>{c.freshness_score.toFixed(2)}</td>
                 </tr>
