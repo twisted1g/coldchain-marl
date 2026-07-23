@@ -30,6 +30,14 @@ function riskColor(r: number): string {
   return `hsl(${hue}, 90%, 45%)`;
 }
 
+/** Cold blue (~0°C) -> warm red (~25°C) for a node's live storage temperature,
+ *  so a warm hub vs a cold DC reads from the node ring alone. */
+function warmthColor(tempC: number): string {
+  const f = Math.max(0, Math.min(1, tempC / 25));
+  const hue = 210 - f * 210; // 210 (blue) -> 0 (red)
+  return `hsl(${hue}, 80%, 50%)`;
+}
+
 /**
  * System topology: farm -> hub -> DC -> retail laid out in columns, edges as the
  * physical links. Each delivery truck is a triangle in its agent's hue; a loaded
@@ -77,7 +85,14 @@ export function GraphView({ meta, tick, onHover, onUnhover }: Props) {
         marker: {
           size: 26,
           color: names.map((n) => KIND_COLOR[kindOf[n] as keyof typeof KIND_COLOR] ?? INK),
-          line: { width: 2, color: "#ffffff" },
+          // node ring encodes live storage temperature (Design F); white if none
+          line: {
+            width: 3,
+            color: names.map((n) => {
+              const c = tick?.node_climate?.[n];
+              return c ? warmthColor(c.temp) : "#ffffff";
+            }),
+          },
         },
       },
     ];

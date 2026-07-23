@@ -105,13 +105,18 @@ export function HoverCard({ target, pos, meta, tick }: Props) {
   const showInv =
     kind === "retail" && inv && inst != null && inst < inv.levels.length;
 
+  // live per-node micro-climate (Design F) + its kind setpoint/band
+  const climate = tick?.node_climate?.[name];
+  const band = node?.climate_band;
+  const setpoint = node?.climate_setpoint;
+
   // Trucks parked on this node right now, with what they carry. Gives every node
   // — farm/hub/dc included — live content instead of a bare "no live state".
   const here = (tick?.vehicles ?? [])
     .map((v, i) => ({ v, i }))
     .filter(({ v }) => v.current_node === name);
 
-  const hasState = showInv || here.length > 0;
+  const hasState = showInv || here.length > 0 || climate != null;
 
   return (
     <div className="hovercard" style={style}>
@@ -119,6 +124,18 @@ export function HoverCard({ target, pos, meta, tick }: Props) {
         {name.replace("_", " ")}
         {kind && <span className="hc-badge">{KIND_LABEL[kind]}</span>}
       </div>
+      {climate && (
+        <>
+          <Line k="storage temp" v={`${climate.temp.toFixed(1)}°C`} />
+          <Line k="humidity" v={`${(climate.humidity * 100).toFixed(0)}%`} />
+          {setpoint != null && band && (
+            <Line
+              k="setpoint"
+              v={`${setpoint.toFixed(0)}° (${band[0].toFixed(0)}–${band[1].toFixed(0)})`}
+            />
+          )}
+        </>
+      )}
       {showInv && (
         <>
           <Line k="stock" v={inv!.levels[inst!].toFixed(1)} />

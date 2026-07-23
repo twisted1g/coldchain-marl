@@ -5,6 +5,13 @@ export type NodeKind = "farm" | "hub" | "dc" | "retail";
 export interface GraphNode {
   name: string;
   kind: NodeKind;
+  climate_setpoint?: number;
+  climate_band?: [number, number];
+}
+
+export interface NodeClimate {
+  temp: number;
+  humidity: number;
 }
 
 export interface Thresholds {
@@ -101,6 +108,7 @@ export interface Tick {
   infos: Record<string, Record<string, number>>;
   shipment: Shipment;
   ambient: { weather: string; temp: number; humidity: number };
+  node_climate?: Record<string, NodeClimate>;
   calendar: { day_of_year: number; weekday: number; event_multiplier: number };
   inventory: Inventory;
   cargo: Cargo[];

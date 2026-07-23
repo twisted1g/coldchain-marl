@@ -44,7 +44,13 @@ DEFAULT_SLOT_SPAN = 10
 
 def _graph_meta(state: Any) -> dict[str, Any]:
     nodes = [
-        {"name": n, "kind": data["kind"]}
+        {
+            "name": n,
+            "kind": data["kind"],
+            # static per-kind storage climate target + band (Design F)
+            "climate_setpoint": config.NODE_CLIMATE_SETPOINT_C[data["kind"]],
+            "climate_band": list(config.NODE_CLIMATE_BAND_C[data["kind"]]),
+        }
         for n, data in state.graph.nodes(data=True)
     ]
     edges = [
@@ -121,6 +127,14 @@ def _tick_record(
             "weather": str(state.ambient_weather),
             "temp": state.ambient_temp_c,
             "humidity": state.ambient_humidity,
+        },
+        # per-node micro-climate (Design F): each node's live storage temp/humidity
+        "node_climate": {
+            n: {
+                "temp": float(state.node_temp_c[n]),
+                "humidity": float(state.node_humidity[n]),
+            }
+            for n in state.node_temp_c
         },
         "calendar": {
             "day_of_year": state.day_of_year,
