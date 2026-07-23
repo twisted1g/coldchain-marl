@@ -261,10 +261,24 @@ DELIVERY_AGENTS: Final[tuple[str, ...]] = tuple(
     f"delivery_{i}" for i in range(N_VEHICLES)
 )
 
+# Singleton elimination: routing / temperature / spoilage are now per-vehicle
+# first-class agents (one subject = one truck's crate), symmetric like inventory,
+# so a shared policy runs V handles. Idle trucks (no crate) mask to a zero obs /
+# no-op action / zero reward. See docs/singleton_elimination.md.
+ROUTING_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"routing_{i}" for i in range(N_VEHICLES)
+)
+TEMPERATURE_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"temperature_{i}" for i in range(N_VEHICLES)
+)
+SPOILAGE_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"spoilage_{i}" for i in range(N_VEHICLES)
+)
+
 OBS_FIELDS_BY_AGENT: Final[dict[str, tuple[str, ...]]] = {
-    "routing": ROUTING_OBS_FIELDS,
-    "temperature": TEMPERATURE_OBS_FIELDS,
-    "spoilage": SPOILAGE_OBS_FIELDS,
+    **dict.fromkeys(ROUTING_AGENTS, ROUTING_OBS_FIELDS),
+    **dict.fromkeys(TEMPERATURE_AGENTS, TEMPERATURE_OBS_FIELDS),
+    **dict.fromkeys(SPOILAGE_AGENTS, SPOILAGE_OBS_FIELDS),
     **dict.fromkeys(INVENTORY_AGENTS, INVENTORY_OBS_FIELDS),
     **dict.fromkeys(DELIVERY_AGENTS, DELIVERY_OBS_FIELDS),
 }

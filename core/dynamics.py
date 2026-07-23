@@ -48,31 +48,23 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     free = {i for i in range(len(state.vehicles)) if _vehicle_free(state, i)}
     conflicts = buffer.detect(free)
 
-    _apply_temperature_action(state, actions.get("temperature"))
-    _apply_routing_action(state, actions.get("routing"))
+    # Per-crate first-class agents (singleton eliminated): routing/temperature/
+    # spoilage each run one action per truck's crate.
+    _apply_temperature_actions(state, actions)
+    _apply_routing_actions(state, actions)
     _apply_inventory_action(state, actions)
     _apply_delivery_action(state, actions, conflicts)
-    _apply_spoilage_action(state, actions.get("spoilage"))
+    _apply_spoilage_actions(state, actions)
 
     _advance_vehicles(state)
     _advance_node_climate(state)
-    _advance_thermal_state(state)
-    _advance_humidity(state)
-    _advance_spoilage(state)
     _advance_loads(state)
     _advance_cargo(state)
     _maybe_sample_disruption(state)
-    _update_energy(state)
 
-    delivered = state.shipment.current_node == state.shipment.target_node
-    if delivered:
-        state.shipment.ground_truth_label = risk_to_label(state.shipment.spoilage_risk)
-    # In the rolling world a delivered shipment respawns; the episode ends only
-    # at the horizon, so delivery/inventory get a long run of real restock trips.
-    done = state.tick >= state.max_steps or (delivered and not state.rolling)
-    infos = _build_infos(state, delivered)
-    if delivered and state.rolling and not done:
-        respawn_shipment(state)
+    # The world runs to the horizon; there is no singleton delivery to end it.
+    done = state.tick >= state.max_steps
+    infos = _build_infos(state)
 
     observations = all_obs(state)
     rewards = dict.fromkeys(OBS_FIELDS_BY_AGENT, 0.0)
@@ -90,34 +82,58 @@ def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     )
 
 
-def _apply_routing_action(state: GlobalState, action: Any) -> None:
-    if action is None:
-        return
-    edges = list(state.graph.out_edges(state.shipment.current_node, data=True))
-    if not edges:
-        return
-    idx = int(action) % len(edges)
-    _, target, data = edges[idx]
-    blocked = any(
-        d.type is DisruptionType.BLOCKED_NODE and d.target == target
-        for d in state.active_disruptions
-    )
-    if blocked:
-        return
-    state.route_travel_time += float(data["base_transit_time"])
-    state.route_emissions += float(data["base_emissions"])
-    state.shipment.current_node = target
-
-
-def _apply_temperature_action(state: GlobalState, action: Any) -> None:
-    if action is None:
-        return
-    value = float(np.asarray(action).flatten()[0])
-    state.shipment.desired_temperature_c = float(
-        np.clip(
-            value, config.TEMPERATURE_ACTION_LOW_C, config.TEMPERATURE_ACTION_HIGH_C
+def _apply_routing_actions(state: GlobalState, actions: dict[str, Any]) -> None:
+    """One routing agent per truck (paper Alg 1): a loaded truck that sits at a node
+    (not mid-edge) and has departed picks its next hop toward its crate's target.
+    The chosen edge becomes the truck's next step in ``_advance_vehicles``; a wait
+    (self-edge) or a blocked node leaves it in place. Idle trucks are no-ops."""
+    for i, vehicle in enumerate(state.vehicles):
+        crate = vehicle.load
+        cargo = vehicle.carrying
+        if crate is None or cargo is None:
+            continue
+        # only choose a hop when standing at a node, departed, and target not reached
+        if vehicle.edge_ticks_left > 0 or vehicle.route:
+            continue
+        if state.tick < cargo.departure_tick or vehicle.current_node == crate.target_node:
+            continue
+        action = actions.get(f"routing_{i}")
+        if action is None:
+            continue
+        edges = list(state.graph.out_edges(vehicle.current_node, data=True))
+        if not edges:
+            continue
+        _, target, data = edges[int(action) % len(edges)]
+        if target == vehicle.current_node:  # wait action — stay put
+            continue
+        blocked = any(
+            d.type is DisruptionType.BLOCKED_NODE and d.target == target
+            for d in state.active_disruptions
         )
-    )
+        if blocked:
+            continue
+        vehicle.route = [target]
+        vehicle.route_transit += float(data["base_transit_time"])
+        vehicle.route_emissions += float(data["base_emissions"])
+        vehicle.emissions += float(data["base_emissions"])
+
+
+def _apply_temperature_actions(state: GlobalState, actions: dict[str, Any]) -> None:
+    """One temperature agent per truck's crate (paper Alg 2): set the reefer
+    setpoint, applied by ``_advance_loads``. Idle trucks are no-ops."""
+    for i, vehicle in enumerate(state.vehicles):
+        crate = vehicle.load
+        if crate is None:
+            continue
+        action = actions.get(f"temperature_{i}")
+        if action is None:
+            continue
+        value = float(np.asarray(action).flatten()[0])
+        crate.desired_temperature_c = float(
+            np.clip(
+                value, config.TEMPERATURE_ACTION_LOW_C, config.TEMPERATURE_ACTION_HIGH_C
+            )
+        )
 
 
 def _apply_inventory_action(state: GlobalState, actions: dict[str, Any]) -> None:
@@ -232,36 +248,37 @@ def _dispatch_orders(state: GlobalState) -> None:
         vehicle = state.vehicles[i]
         instance, qty = state.order_queue.pop(0)
 
-        path = _delivery_path(state, f"retail_{instance}")
-        transit, emissions = _path_cost(state, path)
+        # Routing now drives the (variable) path, so no route is precomputed. The
+        # slot sets the departure window and the SLA deadline; delay / SLA and the
+        # real transit/emissions accrue hop-by-hop and settle when the truck arrives.
         departure = max(
             state.tick, int(np.ceil(slot_start(vehicle.chosen_slot, state.max_steps)))
         )
-        arrival = departure + transit
         deadline = slot_deadline(vehicle.chosen_slot, state.max_steps)
 
-        vehicle.route_transit = float(transit)
-        vehicle.route_emissions = emissions
-        vehicle.busy_until = arrival
-        vehicle.delay = max(0.0, arrival - deadline)
-        vehicle.sla_violated = arrival > deadline
-        vehicle.emissions = emissions
+        vehicle.route_transit = 0.0
+        vehicle.route_emissions = 0.0
+        vehicle.sla_deadline = deadline
+        # optimistic until arrival: a large sentinel keeps busy_until in the future
+        vehicle.busy_until = state.max_steps * 2
+        vehicle.delay = 0.0
+        vehicle.sla_violated = False
+        vehicle.emissions = 0.0
         cargo = Cargo(
             vehicle=i,
             instance=instance,
             departure_tick=departure,
-            # Filled with the actual delivery tick when the truck reaches the
-            # retailer; inventory credits it then. A large sentinel keeps it
-            # in-transit (spoilage decay applies) until then.
-            arrival_tick=state.max_steps + transit + 1,
+            # Filled with the actual delivery tick when the truck arrives; a large
+            # sentinel keeps it in-transit (spoilage decay applies) until then.
+            arrival_tick=state.max_steps * 3,
             qty=qty,
-            emissions=emissions,
+            emissions=0.0,
         )
         state.cargo.append(cargo)
         vehicle.carrying = cargo
         vehicle.load = _new_crate(state, f"retail_{instance}")
         vehicle.current_node = state.depot
-        vehicle.route = path[1:]
+        vehicle.route = []
         vehicle.edge_ticks_left = 0
 
 
@@ -270,9 +287,9 @@ def _new_crate(state: GlobalState, target: str) -> Consignment:
     its retailer. Carries its own thermal + spoilage state so goods spoil by
     their own temperature (multi-instance redesign). The temperature agent is
     wired to it in Phase 3; until then the setpoint stays at the fruit optimum."""
-    params = get_params(state.shipment.fruit_type)
+    params = get_params(state.fruit)
     return Consignment(
-        fruit_type=state.shipment.fruit_type,
+        fruit_type=state.fruit,
         current_node=state.depot,
         target_node=target,
         spoilage_risk=0.0,
@@ -300,6 +317,9 @@ def _advance_vehicles(state: GlobalState) -> None:
             vehicle.current_node = state.depot
     for vehicle in state.vehicles:
         cargo = vehicle.carrying
+        # ``route`` holds the single next hop the routing agent chose this tick;
+        # empty means the truck waits (at the depot before departure, or between
+        # hops until routing picks again).
         if cargo is None or state.tick < cargo.departure_tick or not vehicle.route:
             continue
         if vehicle.edge_ticks_left <= 0:
@@ -311,14 +331,23 @@ def _advance_vehicles(state: GlobalState) -> None:
         vehicle.edge_ticks_left -= 1
         if vehicle.edge_ticks_left <= 0:
             vehicle.current_node = vehicle.route.pop(0)
-            if not vehicle.route:
+            crate = vehicle.load
+            if crate is not None and vehicle.current_node == crate.target_node:
                 _deliver_vehicle(state, vehicle)
 
 
 def _deliver_vehicle(state: GlobalState, vehicle: VehicleState) -> None:
     cargo = vehicle.carrying
+    crate = vehicle.load
+    # Delay / SLA settle against the real (routing-driven) arrival; emissions are
+    # the summed hops the routing agent actually drove.
+    vehicle.delay = max(0.0, state.tick - vehicle.sla_deadline)
+    vehicle.sla_violated = state.tick > vehicle.sla_deadline
     if cargo is not None:
         cargo.arrival_tick = state.tick  # inventory credits it next tick
+        cargo.emissions = vehicle.route_emissions
+    if crate is not None:
+        crate.ground_truth_label = risk_to_label(crate.spoilage_risk)
     vehicle.carrying = None
     vehicle.load = None  # crate delivered
     vehicle.busy_until = state.tick
@@ -329,28 +358,24 @@ def _deliver_vehicle(state: GlobalState, vehicle: VehicleState) -> None:
 
 
 def respawn_shipment(state: GlobalState) -> None:
-    """Replace a delivered shipment with a fresh one entering the network;
-    everything else (inventory, vehicles, cargo, calendar) carries over."""
-    s = state.shipment
-    params = get_params(s.fruit_type)
-    s.current_node = str(state.rng.choice(source_nodes(state.graph)))
-    s.target_node = str(state.rng.choice(sink_nodes(state.graph)))
-    s.spoilage_risk = 0.0
-    s.freshness_score = 1.0
-    s.ground_truth_label = 0
-    s.age_ticks = 0
-    s.sensor_temperature_c = params.optimal_temp_c
-    s.desired_temperature_c = params.optimal_temp_c
-    s.sensor_humidity = state.ambient_humidity
-    state.route_travel_time = 0.0
-    state.route_emissions = 0.0
+    """Deprecated (singleton elimination): the world no longer cycles a singleton
+    shipment. Kept as a no-op so rolling callers that still invoke it don't break
+    until they are repointed. See docs/singleton_elimination.md."""
+    return
 
 
-def _apply_spoilage_action(state: GlobalState, action: Any) -> None:
-    if action is None:
-        return
-    value = float(np.asarray(action).flatten()[0])
-    state.spoilage_prediction = float(np.clip(value, 0.0, 1.0))
+def _apply_spoilage_actions(state: GlobalState, actions: dict[str, Any]) -> None:
+    """One spoilage agent per truck's crate (paper Alg 3): predict this crate's
+    spoilage probability. Idle trucks are no-ops."""
+    for i, vehicle in enumerate(state.vehicles):
+        crate = vehicle.load
+        if crate is None:
+            continue
+        action = actions.get(f"spoilage_{i}")
+        if action is None:
+            continue
+        value = float(np.asarray(action).flatten()[0])
+        crate.spoilage_prediction = float(np.clip(value, 0.0, 1.0))
 
 
 def _advance_node_climate(state: GlobalState) -> None:
@@ -468,6 +493,8 @@ def _advance_loads(state: GlobalState) -> None:
         diff = crate.desired_temperature_c - crate.sensor_temperature_c
         ambient_pull = (external - crate.sensor_temperature_c) * 0.05
         crate.sensor_temperature_c += 0.5 * diff + ambient_pull
+        # reefer energy = fighting the local node climate (per-crate, Design F)
+        crate.energy = abs(crate.sensor_temperature_c - external) * 0.1
         # humidity relaxes to ambient without the rng noise term (noise would
         # desync the shared stream)
         crate.sensor_humidity = float(
@@ -523,18 +550,23 @@ def _update_energy(state: GlobalState) -> None:
     state.energy_usage = diff * 0.1
 
 
-def _build_infos(
-    state: GlobalState,
-    delivered: bool,
-) -> dict[str, dict[str, Any]]:
-    infos = {
-        "routing": {"delivered": delivered},
-        "temperature": {"energy_usage": state.energy_usage},
-        "spoilage": {
-            "y_pred": state.spoilage_prediction,
-            "ground_truth_label": state.shipment.ground_truth_label,
-        },
-    }
+def _build_infos(state: GlobalState) -> dict[str, dict[str, Any]]:
+    infos: dict[str, dict[str, Any]] = {}
+    # Per-crate routing / temperature / spoilage (empty-ish when the truck is idle).
+    for i, vehicle in enumerate(state.vehicles):
+        crate = vehicle.load
+        loaded = crate is not None
+        infos[f"routing_{i}"] = {
+            "loaded": float(loaded),
+            "at_target": float(loaded and vehicle.current_node == crate.target_node),
+        }
+        infos[f"temperature_{i}"] = {
+            "energy_usage": crate.energy if loaded else 0.0,
+        }
+        infos[f"spoilage_{i}"] = {
+            "y_pred": crate.spoilage_prediction if loaded else 0.0,
+            "ground_truth_label": crate.ground_truth_label if loaded else 0,
+        }
     for i in range(config.N_INVENTORY_INSTANCES):
         infos[f"inventory_{i}"] = {
             "inventory_level": state.inventory_levels[i],

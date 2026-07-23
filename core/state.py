@@ -49,6 +49,16 @@ class Consignment:
     sensor_humidity: float
     desired_temperature_c: float
     freshness_score: float
+    # per-crate spoilage prediction from the spoilage policy (CTDE execution);
+    # 0.0 until a prediction is made.
+    spoilage_prediction: float = 0.0
+    # per-crate reefer energy (|crate temp - node climate| * scale), set each tick
+    # while in transit; feeds the per-crate temperature reward.
+    energy: float = 0.0
+    # per-crate routing plan: remaining node hops the routing policy chose for this
+    # crate toward its target (empty = use the default shortest path). Viz/inference
+    # only. See docs/multi_instance_redesign.md.
+    route_plan: list[str] = field(default_factory=list)
 
 
 # Back-compat alias: the singleton is still spelled ``Shipment`` in older code.
@@ -74,9 +84,12 @@ class VehicleState:
     route: list[str] = field(default_factory=list)
     edge_ticks_left: int = 0
     carrying: Cargo | None = None
-    # The crate riding this vehicle (multi-instance redesign). Unused until the
-    # per-crate dynamics land (Phase 2); ``None`` = empty truck.
+    # The crate riding this vehicle (multi-instance redesign). ``None`` = empty.
     load: Consignment | None = None
+    # Tick by which this trip must arrive (from the chosen delivery slot). Set at
+    # dispatch; delay / SLA are measured against it when the truck actually arrives,
+    # since routing now drives the (variable) path (singleton elimination).
+    sla_deadline: float = 0.0
 
 
 @dataclass(slots=True)
@@ -98,6 +111,12 @@ class GlobalState:
     rng: np.random.Generator
     graph: nx.DiGraph
     depot: str
+    # World fruit (single-fruit for now; per-crate fruit heterogeneity is a
+    # follow-up). Replaces the removed singleton shipment's fruit_type.
+    fruit: FruitKey
+    # Vestigial during the singleton-elimination migration: no longer the routing/
+    # temperature/spoilage subject (those are per-crate now). Kept until training_env
+    # / viz / pretrain repoint off it, then deleted. See docs/singleton_elimination.md.
     shipment: Consignment
     active_disruptions: list[Disruption]
     ambient_weather: Weather
@@ -232,6 +251,7 @@ def init_state(
         rng=rng,
         graph=graph,
         depot=depot,
+        fruit=fruit,
         shipment=shipment,
         active_disruptions=[],
         ambient_weather=weather,

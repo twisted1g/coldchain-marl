@@ -36,18 +36,42 @@ def node_delay(state: GlobalState, node: str) -> float:
     return min(1.0, total / _DELAY_SCALE)
 
 
-def spoilage_node_features(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    fruit = float(_FRUIT_INDEX[s.fruit_type])
+def _node_features(
+    state: GlobalState,
+    subject_node: str,
+    sensor_temp: float,
+    sensor_humidity: float,
+    fruit_type,
+) -> np.ndarray:
+    """GNN node grid for one spoilage subject: the subject's sensor reading sits at
+    its current node, every other node shows its own storage micro-climate (Design
+    F). Shared by the singleton shipment and per-crate decentralised execution."""
+    fruit = float(_FRUIT_INDEX[fruit_type])
     rows: list[list[float]] = []
     for node in node_order(state.graph):
-        if node == s.current_node:
-            # the crate is being measured here — show its sensor reading
-            temp, hum = s.sensor_temperature_c, s.sensor_humidity
+        if node == subject_node:
+            temp, hum = sensor_temp, sensor_humidity
         else:
-            # every other node shows its own storage micro-climate (Design F),
-            # so the GNN reasons over real per-node conditions, not ambient copies
             temp = state.node_temp_c.get(node, state.ambient_temp_c)
             hum = state.node_humidity.get(node, state.ambient_humidity)
         rows.append([temp, hum, node_delay(state, node), fruit])
     return np.array(rows, dtype=np.float32)
+
+
+def spoilage_node_features(state: GlobalState) -> np.ndarray:
+    s = state.shipment
+    return _node_features(
+        state, s.current_node, s.sensor_temperature_c, s.sensor_humidity, s.fruit_type
+    )
+
+
+def crate_spoilage_node_features(state: GlobalState, crate) -> np.ndarray:
+    """Node grid for a single truck-borne crate (CTDE decentralised execution — the
+    trained spoilage GNN policy predicts each crate at inference)."""
+    return _node_features(
+        state,
+        crate.current_node,
+        crate.sensor_temperature_c,
+        crate.sensor_humidity,
+        crate.fruit_type,
+    )
