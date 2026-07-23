@@ -10,7 +10,11 @@ import { CargoPanel } from "./components/CargoPanel";
 import { NegotiationPanel } from "./components/NegotiationPanel";
 import { SystemBar } from "./components/SystemBar";
 import { StepBar } from "./components/StepBar";
+import { MediatorSwitch, type Mediator } from "./components/MediatorSwitch";
 import type { Episode, Tick } from "./types";
+
+const LIVE_SEED = 96_000;
+const LIVE_HORIZON = 60;
 
 /**
  * Dashboard shell — components cleared for a rewrite.
@@ -27,6 +31,7 @@ export function App() {
   const [index, setIndex] = useState(0);
   const [status, setStatus] = useState("loading…");
   const [playing, setPlaying] = useState(false);
+  const [mediator, setMediator] = useState<Mediator>("greedy");
   const [hover, setHover] = useState<{
     target: HoverTarget;
     x: number;
@@ -58,6 +63,31 @@ export function App() {
     [live],
   );
 
+  // Start a rolling live inference with the chosen conflict solver. Called on
+  // "Live" and again whenever the mediator switch flips while already live, so
+  // the world restarts under the new solver.
+  const goLive = useCallback(
+    (m: Mediator) => {
+      setMode("live");
+      setPlaying(false);
+      live.start({ seed: LIVE_SEED, horizon: LIVE_HORIZON, mediator: m });
+    },
+    [live],
+  );
+
+  const stopLive = useCallback(() => {
+    live.stop();
+    setMode("episode");
+  }, [live]);
+
+  const changeMediator = useCallback(
+    (m: Mediator) => {
+      setMediator(m);
+      if (isLive) goLive(m);
+    },
+    [isLive, goLive],
+  );
+
   useEffect(() => {
     listEpisodes()
       .then(({ episodes }) => {
@@ -72,6 +102,10 @@ export function App() {
   useEffect(() => {
     if (isLive) setIndex(Math.max(0, live.ticks.length - 1));
   }, [isLive, live.ticks.length]);
+
+  useEffect(() => {
+    if (isLive) setStatus(`live · ${mediator} · ${live.status}`);
+  }, [isLive, mediator, live.status]);
 
   // Auto-advance the tick pointer while playing (episode mode only). Stops at
   // the last tick. Every tick moves all agents together — the frame already
@@ -115,6 +149,13 @@ export function App() {
               ))}
             </select>
           </label>
+          <MediatorSwitch value={mediator} onChange={changeMediator} />
+          <button
+            className={isLive ? "livebtn on" : "livebtn"}
+            onClick={() => (isLive ? stopLive() : goLive(mediator))}
+          >
+            {isLive ? "■ stop" : "▶ live"}
+          </button>
           <span className="status">{status}</span>
         </div>
       </header>
