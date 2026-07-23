@@ -5,7 +5,14 @@ from functools import partial
 from typing import Any
 
 from core import config as core_config
-from core.config import DELIVERY_AGENTS, INVENTORY_AGENTS, FruitKey
+from core.config import (
+    DELIVERY_AGENTS,
+    INVENTORY_AGENTS,
+    ROUTING_AGENTS,
+    SPOILAGE_AGENTS,
+    TEMPERATURE_AGENTS,
+    FruitKey,
+)
 from core.dynamics import expected_lead_time, respawn_shipment
 from core.interfaces.observations import all_obs
 from core.world.fruits import get_params
@@ -120,9 +127,18 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
             rolling=bool(config.get("rolling", False)),
         )
         supported: dict[str, RewardMethod] = {
-            "temperature": self._temperature_reward,
-            "routing": self._routing_reward,
-            "spoilage": self._spoilage_reward,
+            **{
+                name: partial(self._temperature_reward, i)
+                for i, name in enumerate(TEMPERATURE_AGENTS)
+            },
+            **{
+                name: partial(self._routing_reward, i)
+                for i, name in enumerate(ROUTING_AGENTS)
+            },
+            **{
+                name: partial(self._spoilage_reward, i)
+                for i, name in enumerate(SPOILAGE_AGENTS)
+            },
             **{
                 name: partial(self._inventory_reward, i)
                 for i, name in enumerate(INVENTORY_AGENTS)
@@ -159,11 +175,15 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         return obs
 
     def _snapshot_prev(self) -> None:
-        """Remember the cumulative quantities whose deltas feed the rewards."""
+        """Per-vehicle cumulative quantities whose deltas feed the routing/
+        temperature rewards (singleton eliminated — one subject per truck)."""
+        vehicles = self._state.vehicles
         self._prev = {
-            "spoilage_risk": self._state.shipment.spoilage_risk,
-            "route_travel_time": self._state.route_travel_time,
-            "route_emissions": self._state.route_emissions,
+            "route_transit": [v.route_transit for v in vehicles],
+            "route_emissions": [v.route_emissions for v in vehicles],
+            "spoilage_risk": [
+                v.load.spoilage_risk if v.load is not None else 0.0 for v in vehicles
+            ],
         }
 
     def _apply_forecast(self, obs: dict[str, Any]) -> dict[str, Any]:
@@ -212,15 +232,24 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         self._snapshot_prev()
         return obs, rewards, terminated, truncated, infos
 
-    def _temperature_reward(self) -> tuple[float, dict[str, float]]:
-        s = self._state.shipment
-        energy = float(self._state.energy_usage)
-        spoilage_delta = max(0.0, s.spoilage_risk - self._prev["spoilage_risk"])
-
-        deviation = abs(
-            s.sensor_temperature_c - get_params(s.fruit_type).optimal_temp_c
+    def _delivered_this_tick(self, i: int) -> bool:
+        """Truck i's crate arrived this tick (its cargo's arrival_tick was just set
+        in ``_deliver_vehicle``); the crate is already unloaded, so read the cargo."""
+        return any(
+            c.vehicle == i and c.arrival_tick == self._state.tick
+            for c in self._state.cargo
         )
 
+    def _temperature_reward(self, i: int) -> tuple[float, dict[str, float]]:
+        """Paper Alg 2, per crate. Idle truck (no crate) contributes no signal."""
+        crate = self._state.vehicles[i].load
+        if crate is None:
+            return 0.0, {"temp_deviation": 0.0}
+        energy = crate.energy
+        spoilage_delta = max(0.0, crate.spoilage_risk - self._prev["spoilage_risk"][i])
+        deviation = abs(
+            crate.sensor_temperature_c - get_params(crate.fruit_type).optimal_temp_c
+        )
         weighted = _dynamic_pareto(
             [
                 (DEVIATION_WEIGHT, deviation),
@@ -228,39 +257,42 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
                 (SPOILAGE_WEIGHT, spoilage_delta),
             ]
         )
-        reward = -weighted - STEP_PENALTY
-        return reward, {"temp_deviation": deviation}
+        return -weighted - STEP_PENALTY, {"temp_deviation": deviation}
 
-    def _routing_reward(self) -> tuple[float, dict[str, float]]:
-        """Paper Alg 1: weights from ctx = [dT, traffic, SLA priority] applied to
-        costs [t, sigma, e]. Traffic = disruption delay at the current node; SLA
-        priority = episode-deadline pressure (paper leaves both undefined)."""
-        dt_time = self._state.route_travel_time - self._prev["route_travel_time"]
-        dt_emissions = self._state.route_emissions - self._prev["route_emissions"]
-        risk = self._state.shipment.spoilage_risk
-
-        s = self._state.shipment
+    def _routing_reward(self, i: int) -> tuple[float, dict[str, float]]:
+        """Paper Alg 1, per crate: cost = Pareto over [hop time, spoilage risk, hop
+        emissions] with ctx = [dT, traffic, SLA priority]; a big bonus on arrival."""
+        if self._delivered_this_tick(i):
+            return DELIVERY_BONUS, {"route_cost": 0.0, "delivered": 1.0}
+        v = self._state.vehicles[i]
+        crate = v.load
+        if crate is None:
+            return 0.0, {"route_cost": 0.0, "delivered": 0.0}
+        dt_time = v.route_transit - self._prev["route_transit"][i]
+        dt_emissions = v.route_emissions - self._prev["route_emissions"][i]
         temp_deviation = abs(
-            s.sensor_temperature_c - get_params(s.fruit_type).optimal_temp_c
+            crate.sensor_temperature_c - get_params(crate.fruit_type).optimal_temp_c
         )
-        traffic = node_delay(self._state, s.current_node)
+        traffic = node_delay(self._state, v.current_node)
         sla_priority = self._state.tick / self._state.max_steps
-
         cost = _dynamic_pareto(
             [
                 (ROUTE_TIME_WEIGHT, dt_time),
-                (ROUTE_RISK_WEIGHT, risk),
+                (ROUTE_RISK_WEIGHT, crate.spoilage_risk),
                 (ROUTE_EMISSIONS_WEIGHT, dt_emissions),
             ],
             ctx=[temp_deviation, traffic, sla_priority],
         )
-        delivered = s.current_node == s.target_node
-        reward = -cost + (DELIVERY_BONUS if delivered else 0.0)
-        return reward, {"route_cost": cost, "delivered": float(delivered)}
+        return -cost, {"route_cost": cost, "delivered": 0.0}
 
-    def _spoilage_reward(self) -> tuple[float, dict[str, float]]:
-        pred = self._state.spoilage_prediction
-        label = float(risk_to_label(self._state.shipment.spoilage_risk))
+    def _spoilage_reward(self, i: int) -> tuple[float, dict[str, float]]:
+        """Paper Alg 3, per crate: penalise prediction error, false negatives, and
+        inspection cost. Idle truck contributes no signal."""
+        crate = self._state.vehicles[i].load
+        if crate is None:
+            return 0.0, {"fn_rate": 0.0, "y_pred": 0.0, "spoilage_label": 0.0}
+        pred = crate.spoilage_prediction
+        label = float(risk_to_label(crate.spoilage_risk))
         pred_error = (pred - label) ** 2
         false_negative = 1.0 if (label == 1.0 and pred < 0.5) else 0.0
         reward = -_dynamic_pareto(
@@ -286,8 +318,10 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         s = self._state
         level = s.inventory_levels[i]
         # Post-sale level is the leftover that did not meet demand, i.e. the
-        # overstock that spoils (Alg 4 line 15, "overstocked perishables").
-        spoilage_loss = level * s.shipment.spoilage_risk
+        # overstock that spoils (Alg 4 line 15, "overstocked perishables"). Without
+        # a singleton shipment, held stock decays at the fruit's baseline rate.
+        spoil_rate = 1.0 / get_params(s.fruit).base_shelf_life_ticks
+        spoilage_loss = level * spoil_rate
         # Et = emissions of the delivery that arrived this tick (Alg 4 line 16),
         # not the order magnitude at order time — the latter penalised ordering
         # instantly while its payoff lagged by the lead time, so order=0 won.

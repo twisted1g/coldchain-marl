@@ -15,7 +15,14 @@ from typing import Any
 import numpy as np
 
 from core import config as core_config
-from core.config import DELIVERY_AGENTS, INVENTORY_AGENTS, OBS_FIELDS_BY_AGENT
+from core.config import (
+    DELIVERY_AGENTS,
+    INVENTORY_AGENTS,
+    OBS_FIELDS_BY_AGENT,
+    ROUTING_AGENTS,
+    SPOILAGE_AGENTS,
+    TEMPERATURE_AGENTS,
+)
 from env.training_env import DEFAULT_MAX_STEPS, ColdChainTrainingEnv
 from training.marl.agents import (
     Agent,
@@ -39,26 +46,48 @@ COMPARE_EPISODES = 30
 
 AGENTS = list(OBS_FIELDS_BY_AGENT)
 ALGO = {
-    "temperature": "DDPG",
-    "routing": "DQN",
-    "spoilage": "SPOILAGE_GNN",
+    **dict.fromkeys(TEMPERATURE_AGENTS, "DDPG"),
+    **dict.fromkeys(ROUTING_AGENTS, "DQN"),
+    **dict.fromkeys(SPOILAGE_AGENTS, "SPOILAGE_GNN"),
     **dict.fromkeys(INVENTORY_AGENTS, "DDPG"),
     **dict.fromkeys(DELIVERY_AGENTS, "MADDPG"),
 }
 METRIC = {
-    "temperature": ("temp_deviation", "min"),
-    "routing": ("route_cost", "min"),
-    "spoilage": ("fn_rate", "min"),
+    **dict.fromkeys(TEMPERATURE_AGENTS, ("temp_deviation", "min")),
+    **dict.fromkeys(ROUTING_AGENTS, ("route_cost", "min")),
+    **dict.fromkeys(SPOILAGE_AGENTS, ("fn_rate", "min")),
     **dict.fromkeys(INVENTORY_AGENTS, ("inventory_cost", "min")),
     **dict.fromkeys(DELIVERY_AGENTS, ("delivery_cost", "min")),
 }
 COMPARE_METRIC = {
     **METRIC,
-    "routing": ("return", "max"),
+    # random routing rarely reaches the target, so compare on return (bonus + cost)
+    **dict.fromkeys(ROUTING_AGENTS, ("return", "max")),
     **dict.fromkeys(DELIVERY_AGENTS, ("slot_cost", "min")),
 }
 
-LEARNERS = ["temperature", "routing", "spoilage", *INVENTORY_AGENTS, *DELIVERY_AGENTS]
+LEARNERS = [
+    *TEMPERATURE_AGENTS,
+    *ROUTING_AGENTS,
+    *SPOILAGE_AGENTS,
+    *INVENTORY_AGENTS,
+    *DELIVERY_AGENTS,
+]
+
+# Agent types that share one policy over symmetric instances (Alg 4). Each maps to
+# its algorithm; delivery is a separate MADDPG group.
+SHARED_GROUPS: dict[str, str] = {
+    "routing": "DQN",
+    "temperature": "DDPG",
+    "spoilage": "SPOILAGE_GNN",
+    "inventory": "DDPG",
+}
+_GROUP_MEMBERS: dict[str, tuple[str, ...]] = {
+    "routing": ROUTING_AGENTS,
+    "temperature": TEMPERATURE_AGENTS,
+    "spoilage": SPOILAGE_AGENTS,
+    "inventory": INVENTORY_AGENTS,
+}
 
 FRUIT = "banana"
 TRAIN_SEED = 1000
@@ -119,16 +148,13 @@ def module_dir(agent: str, tag: str | None = None) -> Path:
 
 
 def learner_blocks(learners: list[str]) -> dict[str, list[str]]:
-    """Evaluation blocks: one per solo learner; inventory instances and
-    delivery vehicles grouped."""
-    grouped = (*INVENTORY_AGENTS, *DELIVERY_AGENTS)
-    blocks = {a: [a] for a in learners if a not in grouped}
-    inventory = [a for a in learners if a in INVENTORY_AGENTS]
-    if inventory:
-        blocks["inventory"] = inventory
-    delivery = [a for a in learners if a in DELIVERY_AGENTS]
-    if delivery:
-        blocks["delivery"] = delivery
+    """Evaluation blocks: symmetric instances of each type grouped under one name
+    (routing / temperature / spoilage / inventory / delivery)."""
+    blocks: dict[str, list[str]] = {}
+    for name, members in {**_GROUP_MEMBERS, "delivery": DELIVERY_AGENTS}.items():
+        present = [a for a in learners if a in members]
+        if present:
+            blocks[name] = present
     return blocks
 
 
@@ -190,27 +216,40 @@ def _build_delivery_group(
     return {name: DeliveryHandle(group, i) for i, name in enumerate(delivery_learners)}
 
 
-def _build_inventory_group(
-    env: ColdChainTrainingEnv, inventory_learners: list[str]
+def _build_shared_group(
+    env: ColdChainTrainingEnv, members: list[str], algo: str
 ) -> dict[str, Agent]:
-    """One shared DDPG policy over symmetric instances (paper Alg 4 S={s(i)})."""
-    first = inventory_learners[0]
+    """One shared policy over symmetric instances (paper Alg 4 S={s(i)}) — the same
+    net runs V handles; handle 0 owns the gradient step + checkpoint."""
+    first = members[0]
     obs_dim = int(np.prod(env.observation_space(first).shape))
-    shared = DDPGAgent(obs_dim, env.action_space(first), ALGO_CFG["DDPG"])
-    return {name: SharedHandle(shared, i) for i, name in enumerate(inventory_learners)}
+    action_space = env.action_space(first)
+    if algo == "DDPG":
+        shared: Agent = DDPGAgent(obs_dim, action_space, ALGO_CFG["DDPG"])
+    elif algo == "DQN":
+        shared = DQNAgent(obs_dim, action_space, ALGO_CFG["DQN"])
+    elif algo == "SPOILAGE_GNN":
+        shared = SpoilageAgent(
+            obs_dim, action_space, ALGO_CFG["SPOILAGE_GNN"], SPOILAGE_ENCODER_PATH
+        )
+    else:
+        raise NotImplementedError(f"Shared group algorithm {algo!r} not implemented")
+    return {name: SharedHandle(shared, i) for i, name in enumerate(members)}
 
 
 def build_agents(env: ColdChainTrainingEnv, learners: list[str]) -> dict[str, Agent]:
     """All agents for the CTDE loop: learners get their algorithm, rest frozen.
 
     Delivery learners share one MADDPGDelivery group (paper Alg 5 shared critic);
-    inventory learners share one DDPG policy.
+    routing / temperature / spoilage / inventory each share one policy over their
+    symmetric per-vehicle instances (Alg 4).
     """
     delivery_learners = [a for a in AGENTS if a in learners and a in DELIVERY_AGENTS]
     grouped = _build_delivery_group(env, delivery_learners) if delivery_learners else {}
-    inventory_learners = [a for a in AGENTS if a in learners and a in INVENTORY_AGENTS]
-    if inventory_learners:
-        grouped |= _build_inventory_group(env, inventory_learners)
+    for group, algo in SHARED_GROUPS.items():
+        members = [a for a in AGENTS if a in learners and a in _GROUP_MEMBERS[group]]
+        if members:
+            grouped |= _build_shared_group(env, members, algo)
 
     agents: dict[str, Agent] = {}
     for agent in AGENTS:

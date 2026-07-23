@@ -11,14 +11,16 @@ from torch_geometric.loader import DataLoader
 from core.dynamics import step
 from core.interfaces.spaces import make_action_spaces
 from core.state import init_state
-from core.world.graph_features import spoilage_node_features, static_edge_index
+from core.world.graph_features import crate_spoilage_node_features, static_edge_index
 from core.world.spoilage import risk_to_label
 from training.config import SPOILAGE_ENCODER_PATH
 from training.marl.gnn import SpoilagePretrainModel
 
 SEED = 0
 N_EPISODES = 1200
-EPISODE_MAX_STEPS = 20
+# Rolling world so crates are dispatched and ride multi-hop trips; per-crate node
+# grids + labels are the pretraining subject (singleton eliminated).
+EPISODE_MAX_STEPS = 40
 EPOCHS = 60
 BATCH_SIZE = 128
 LR = 1e-3
@@ -33,14 +35,22 @@ def _build_samples(seed: int, n_episodes: int) -> list[Data]:
 
     samples: list[Data] = []
     for ep in range(n_episodes):
-        state = init_state(seed=seed + ep, max_steps=EPISODE_MAX_STEPS)
+        state = init_state(seed=seed + ep, max_steps=EPISODE_MAX_STEPS, rolling=True)
         edge_index = torch.as_tensor(static_edge_index(state.graph), dtype=torch.long)
         for _ in range(state.max_steps):
             actions = {name: space.sample() for name, space in spaces.items()}
             result = step(state, actions)
-            x = torch.as_tensor(spoilage_node_features(state), dtype=torch.float32)
-            y = float(risk_to_label(state.shipment.spoilage_risk))
-            samples.append(Data(x=x, edge_index=edge_index, y=torch.tensor([y])))
+            # one sample per in-transit crate — its own node grid + spoilage label,
+            # matching the per-crate obs the spoilage policy sees at inference
+            for vehicle in state.vehicles:
+                crate = vehicle.load
+                if crate is None:
+                    continue
+                x = torch.as_tensor(
+                    crate_spoilage_node_features(state, crate), dtype=torch.float32
+                )
+                y = float(risk_to_label(crate.spoilage_risk))
+                samples.append(Data(x=x, edge_index=edge_index, y=torch.tensor([y])))
             if result.terminated["__all__"]:
                 break
     return samples
