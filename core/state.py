@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import networkx as nx
@@ -133,6 +134,10 @@ class GlobalState:
     node_temp_c: dict[str, float]
     node_humidity: dict[str, float]
     node_climate_rng: np.random.Generator
+    # Day-to-day weather evolution: ambient weather/temp/humidity are re-rolled each
+    # tick (day) via a sticky Markov chain, so a hot spell or storm plays out over
+    # days instead of a single frozen sample. Own rng keeps other streams stable.
+    weather_rng: np.random.Generator
     # When set, a delivered shipment respawns instead of ending the episode, so
     # the world rolls on and restock trucks complete real multi-tick trips.
     rolling: bool = False
@@ -219,6 +224,7 @@ def init_state(
         base_seed + config.NODE_CLIMATE_RNG_OFFSET
     )
     node_temp_c, node_humidity = _init_node_climate(graph, node_climate_rng)
+    weather_rng = np.random.default_rng(base_seed + config.WEATHER_RNG_OFFSET)
 
     return GlobalState(
         tick=0,
@@ -259,6 +265,7 @@ def init_state(
         node_temp_c=node_temp_c,
         node_humidity=node_humidity,
         node_climate_rng=node_climate_rng,
+        weather_rng=weather_rng,
         rolling=rolling,
     )
 
@@ -342,8 +349,21 @@ def _route_cost(graph: nx.DiGraph, source: str, target: str) -> tuple[float, flo
     return transit, emissions
 
 
-def _sample_ambient_temp(rng: np.random.Generator, weather: Weather) -> float:
-    return _AMBIENT_BASE_TEMP_C[weather] + float(rng.normal(0.0, 3.0))
+def _sample_ambient_temp(
+    rng: np.random.Generator, weather: Weather, day_of_year: int = 0
+) -> float:
+    """Outdoor temperature for the day: weather base + annual seasonal swing +
+    daily noise, clamped to a plausible range."""
+    season = config.AMBIENT_SEASONAL_AMPLITUDE_C * math.sin(
+        2.0 * math.pi * day_of_year / config.DAYS_PER_YEAR
+    )
+    lo, hi = config.AMBIENT_TEMP_RANGE_C
+    raw = (
+        _AMBIENT_BASE_TEMP_C[weather]
+        + season
+        + float(rng.normal(0.0, config.AMBIENT_DAILY_NOISE_SIGMA_C))
+    )
+    return float(np.clip(raw, lo, hi))
 
 
 def _sample_ambient_humidity(rng: np.random.Generator, weather: Weather) -> float:

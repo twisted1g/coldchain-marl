@@ -151,6 +151,44 @@ WEATHER_PRIORS: Final[dict[Weather, float]] = {
     Weather.STORMY: 0.05,
 }
 
+# Day-to-day weather evolution (one tick = one day). Weather is sticky — the
+# diagonal dominates — so a spell of sun or a passing storm plays out over several
+# days instead of a single frozen sample per episode (paper Sec 3: genAI simulates
+# changing/extreme weather). Rows are the current weather, values the next-day
+# distribution; each row sums to 1.
+WEATHER_TRANSITION: Final[dict[Weather, dict[Weather, float]]] = {
+    Weather.SUNNY: {
+        Weather.SUNNY: 0.70,
+        Weather.CLOUDY: 0.22,
+        Weather.RAINY: 0.06,
+        Weather.STORMY: 0.02,
+    },
+    Weather.CLOUDY: {
+        Weather.SUNNY: 0.30,
+        Weather.CLOUDY: 0.45,
+        Weather.RAINY: 0.20,
+        Weather.STORMY: 0.05,
+    },
+    Weather.RAINY: {
+        Weather.SUNNY: 0.15,
+        Weather.CLOUDY: 0.30,
+        Weather.RAINY: 0.40,
+        Weather.STORMY: 0.15,
+    },
+    Weather.STORMY: {
+        Weather.SUNNY: 0.10,
+        Weather.CLOUDY: 0.25,
+        Weather.RAINY: 0.35,
+        Weather.STORMY: 0.30,
+    },
+}
+# Ambient temperature is resampled each day: weather base + annual seasonal swing
+# + daily noise, clamped to a plausible outdoor range.
+AMBIENT_SEASONAL_AMPLITUDE_C: Final[float] = 6.0
+AMBIENT_DAILY_NOISE_SIGMA_C: Final[float] = 2.0
+AMBIENT_TEMP_RANGE_C: Final[tuple[float, float]] = (-5.0, 42.0)
+WEATHER_RNG_OFFSET: Final[int] = 555  # isolate weather noise from other streams
+
 DEMAND_WEATHER_MULT: Final[dict[Weather, float]] = {
     Weather.SUNNY: 1.3,
     Weather.CLOUDY: 1.0,

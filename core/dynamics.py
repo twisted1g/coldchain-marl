@@ -10,7 +10,14 @@ from core import config
 from core.config import OBS_FIELDS_BY_AGENT, DisruptionType
 from core.interfaces.intention import IntentionBuffer
 from core.interfaces.observations import all_obs
-from core.state import Cargo, Consignment, GlobalState, VehicleState
+from core.state import (
+    Cargo,
+    Consignment,
+    GlobalState,
+    VehicleState,
+    _sample_ambient_humidity,
+    _sample_ambient_temp,
+)
 from core.world import demand
 from core.world.fruits import get_params
 from core.world.graph import sink_nodes, source_nodes
@@ -33,6 +40,7 @@ _spoilage_model = ArrheniusSpoilage()
 
 def step(state: GlobalState, actions: dict[str, Any]) -> StepResult:
     state.tick += 1
+    _advance_weather(state)
     _advance_calendar(state)
 
     buffer = IntentionBuffer()
@@ -399,6 +407,19 @@ def _advance_spoilage(state: GlobalState) -> None:
     s.spoilage_risk = float(np.clip(s.spoilage_risk + delta, 0.0, 1.0))
     s.freshness_score = float(max(0.0, 1.0 - s.spoilage_risk))
     s.age_ticks += 1
+
+
+def _advance_weather(state: GlobalState) -> None:
+    """Evolve the day's weather via the sticky Markov chain, then re-roll ambient
+    temperature (weather base + seasonal + noise) and humidity. Node micro-climate
+    pulls toward this fresh ambient, so a passing storm or heat spell propagates
+    into the network. Uses the isolated weather rng."""
+    rng = state.weather_rng
+    state.ambient_weather = demand.advance_weather(rng, state.ambient_weather)
+    state.ambient_temp_c = _sample_ambient_temp(
+        rng, state.ambient_weather, state.day_of_year
+    )
+    state.ambient_humidity = _sample_ambient_humidity(rng, state.ambient_weather)
 
 
 def _advance_calendar(state: GlobalState) -> None:

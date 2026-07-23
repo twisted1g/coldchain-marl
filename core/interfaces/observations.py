@@ -95,9 +95,12 @@ def temperature_obs(state: GlobalState) -> np.ndarray:
 
 def crate_temperature_obs(state: GlobalState, crate) -> np.ndarray:
     """Temperature obs built from a single truck-borne crate (CTDE decentralized
-    execution — the trained temperature policy runs per crate at inference).
-    Same layout as ``temperature_obs``; energy is the crate's own |ΔT_ambient|."""
-    energy = abs(crate.sensor_temperature_c - state.ambient_temp_c) * 0.1
+    execution — the trained temperature policy runs per crate at inference). Same
+    layout as ``temperature_obs``; energy is the crate's |ΔT| against its OWN node
+    climate, so a crate at a warm hub sees a different cooling load than one in a
+    cold DC and the agent reacts to the local node, not the global outside air."""
+    external = state.node_temp_c.get(crate.current_node, state.ambient_temp_c)
+    energy = abs(crate.sensor_temperature_c - external) * 0.1
     return _temperature_obs_fields(
         state,
         crate.sensor_temperature_c,
@@ -131,10 +134,21 @@ def spoilage_obs(state: GlobalState) -> np.ndarray:
 
 
 def inventory_obs(state: GlobalState, i: int) -> np.ndarray:
-    s = state.shipment
-    shelf_remaining = max(
-        0, get_params(s.fruit_type).base_shelf_life_ticks - s.age_ticks
-    )
+    # shelf life of the stock actually inbound to retailer i: the crate riding to
+    # it (freshest concern if several), else the fruit's full shelf as a fresh
+    # baseline. Per-instance, not the singleton shipment's age.
+    inbound = [
+        v.load
+        for v in state.vehicles
+        if v.carrying is not None and v.carrying.instance == i and v.load is not None
+    ]
+    if inbound:
+        shelf_remaining = min(
+            max(0, get_params(c.fruit_type).base_shelf_life_ticks - c.age_ticks)
+            for c in inbound
+        )
+    else:
+        shelf_remaining = get_params(state.shipment.fruit_type).base_shelf_life_ticks
     on_order = sum(qty for inst, qty in state.order_queue if inst == i) + sum(
         c.qty for c in state.cargo if c.instance == i
     )
@@ -150,15 +164,17 @@ def inventory_obs(state: GlobalState, i: int) -> np.ndarray:
 
 
 def delivery_obs(state: GlobalState, i: int) -> np.ndarray:
-    s = state.shipment
     v = state.vehicles[i]
     horizon = max(1, state.max_steps)
+    # spoilage of THIS vehicle's own cargo (0 when idle) — each delivery agent
+    # reacts to the crate it carries, not the singleton shipment's risk
+    cargo_risk = v.load.spoilage_risk if v.load is not None else 0.0
     return np.array(
         [
             i / max(1, config.N_VEHICLES - 1),
             1.0 if state.tick >= v.busy_until else 0.0,
             float(v.sla_window_ticks) / horizon,
-            s.spoilage_risk,
+            cargo_risk,
             _breakdown_alerts(state),
             v.route_transit / horizon,
         ],
