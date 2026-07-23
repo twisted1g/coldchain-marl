@@ -9,7 +9,6 @@ import numpy as np
 from core import config
 from core.config import FruitKey, Weather
 from core.world import demand
-from core.world.fruits import get_params
 from core.world.graph import build_supply_chain, sink_nodes, source_nodes
 from core.world.noise import Disruption
 
@@ -32,10 +31,8 @@ _AMBIENT_HUMIDITY_BY_WEATHER: dict[Weather, float] = {
 class Consignment:
     """A crate of perishable goods with its own thermal + spoilage state.
 
-    Today one ``Consignment`` is the single global cold-chain shipment
-    (``GlobalState.shipment``); the multi-instance redesign moves a crate onto
-    each delivery vehicle (``VehicleState.load``) so temperature / spoilage /
-    routing become per-crate. See docs/multi_instance_redesign.md.
+    A crate rides each delivery vehicle (``VehicleState.load``); routing,
+    temperature and spoilage are per-crate (singleton elimination).
     """
 
     fruit_type: FruitKey
@@ -55,14 +52,6 @@ class Consignment:
     # per-crate reefer energy (|crate temp - node climate| * scale), set each tick
     # while in transit; feeds the per-crate temperature reward.
     energy: float = 0.0
-    # per-crate routing plan: remaining node hops the routing policy chose for this
-    # crate toward its target (empty = use the default shortest path). Viz/inference
-    # only. See docs/multi_instance_redesign.md.
-    route_plan: list[str] = field(default_factory=list)
-
-
-# Back-compat alias: the singleton is still spelled ``Shipment`` in older code.
-Shipment = Consignment
 
 
 @dataclass(slots=True)
@@ -114,10 +103,6 @@ class GlobalState:
     # World fruit (single-fruit for now; per-crate fruit heterogeneity is a
     # follow-up). Replaces the removed singleton shipment's fruit_type.
     fruit: FruitKey
-    # Vestigial during the singleton-elimination migration: no longer the routing/
-    # temperature/spoilage subject (those are per-crate now). Kept until training_env
-    # / viz / pretrain repoint off it, then deleted. See docs/singleton_elimination.md.
-    shipment: Consignment
     active_disruptions: list[Disruption]
     ambient_weather: Weather
     ambient_temp_c: float
@@ -141,11 +126,7 @@ class GlobalState:
     demand_shock_mult: float
     histories: list[demand.DemandSeries]
     demand_forecast: list[float]
-    energy_usage: float
     fault_signals: int
-    route_travel_time: float
-    route_emissions: float
-    spoilage_prediction: float
     vehicles: list[VehicleState]
     # Per-node micro-climate: each node's own storage temperature/humidity, drifting
     # within a kind-specific band. node_climate_rng isolates this noise so the demand
@@ -180,29 +161,14 @@ def init_state(
     fruits = list(FruitKey)
     fruit = fruit if fruit is not None else fruits[int(rng.integers(0, len(fruits)))]
     source = str(rng.choice(source_nodes(graph)))
-    target = str(rng.choice(sink_nodes(graph)))
-
-    params = get_params(fruit)
-    desired_temp = params.optimal_temp_c
-
-    shipment = Consignment(
-        fruit_type=fruit,
-        current_node=source,
-        target_node=target,
-        spoilage_risk=0.0,
-        ground_truth_label=0,
-        age_ticks=0,
-        perishability_index=1.0 / params.base_shelf_life_ticks,
-        sensor_temperature_c=desired_temp,
-        sensor_humidity=0.85,
-        desired_temperature_c=desired_temp,
-        freshness_score=1.0,
-    )
+    # Preserve the RNG draw the eliminated singleton's target node consumed, so the
+    # world stream (weather / disruptions / demand) stays bit-identical to the seeds
+    # the policies were trained on (singleton elimination).
+    rng.choice(sink_nodes(graph))
 
     weather = demand.sample_weather(rng)
     ambient_temp = _sample_ambient_temp(rng, weather)
     ambient_humidity = _sample_ambient_humidity(rng, weather)
-    shipment.sensor_humidity = ambient_humidity
 
     inventory_rng = np.random.default_rng(base_seed + config.INVENTORY_RNG_OFFSET)
     day_of_year = int(inventory_rng.integers(0, config.DAYS_PER_YEAR))
@@ -252,7 +218,6 @@ def init_state(
         graph=graph,
         depot=depot,
         fruit=fruit,
-        shipment=shipment,
         active_disruptions=[],
         ambient_weather=weather,
         ambient_temp_c=ambient_temp,
@@ -276,11 +241,7 @@ def init_state(
         demand_shock_mult=1.0,
         histories=histories,
         demand_forecast=[config.INVENTORY_DEMAND_MEAN] * config.N_INVENTORY_INSTANCES,
-        energy_usage=0.0,
         fault_signals=0,
-        route_travel_time=0.0,
-        route_emissions=0.0,
-        spoilage_prediction=0.0,
         vehicles=_init_vehicles(retailers, retailer_costs, n_steps, depot),
         node_temp_c=node_temp_c,
         node_humidity=node_humidity,

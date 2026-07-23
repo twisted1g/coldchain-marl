@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from core.config import DELIVERY_AGENTS
 from env.training_env import ColdChainTrainingEnv
 from llm.client import LLMConfig, OpenAICompatClient
 from llm.mediation import SlotMediator

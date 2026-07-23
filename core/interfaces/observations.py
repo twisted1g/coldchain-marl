@@ -7,10 +7,7 @@ from core import config
 from core.config import DisruptionType, Weather
 from core.state import GlobalState
 from core.world.fruits import get_params
-from core.world.graph_features import (
-    crate_spoilage_node_features,
-    spoilage_node_features,
-)
+from core.world.graph_features import crate_spoilage_node_features
 
 WEATHER_INDEX: dict[Weather, int] = {w: i for i, w in enumerate(Weather)}
 
@@ -36,10 +33,6 @@ def _route_status_at(state: GlobalState, node: str) -> float:
         for d in state.active_disruptions
     )
     return 1.0 if blocked else 0.0
-
-
-def _route_status(state: GlobalState) -> float:
-    return _route_status_at(state, state.shipment.current_node)
 
 
 def _breakdown_alerts(state: GlobalState) -> float:
@@ -71,28 +64,6 @@ def _routing_edge_features_at(
     return feats
 
 
-def _routing_edge_features(state: GlobalState) -> list[float]:
-    s = state.shipment
-    return _routing_edge_features_at(state, s.current_node, s.target_node)
-
-
-def routing_obs(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    return np.array(
-        [
-            _traffic_status(state),
-            float(WEATHER_INDEX[state.ambient_weather]),
-            s.perishability_index,
-            _route_status(state),
-            s.spoilage_risk,
-            _node_index(state, s.current_node),
-            _node_index(state, s.target_node),
-            *_routing_edge_features(state),
-        ],
-        dtype=np.float32,
-    )
-
-
 def crate_routing_obs(state: GlobalState, crate, current_node: str) -> np.ndarray:
     """Routing obs from a single crate's perspective at ``current_node`` (CTDE
     decentralised execution — the trained routing policy drives each crate toward
@@ -109,16 +80,6 @@ def crate_routing_obs(state: GlobalState, crate, current_node: str) -> np.ndarra
             *_routing_edge_features_at(state, current_node, crate.target_node),
         ],
         dtype=np.float32,
-    )
-
-
-def temperature_obs(state: GlobalState) -> np.ndarray:
-    return _temperature_obs_fields(
-        state,
-        state.shipment.sensor_temperature_c,
-        state.shipment.sensor_humidity,
-        state.shipment.desired_temperature_c,
-        state.energy_usage,
     )
 
 
@@ -156,10 +117,6 @@ def _temperature_obs_fields(
         ],
         dtype=np.float32,
     )
-
-
-def spoilage_obs(state: GlobalState) -> np.ndarray:
-    return spoilage_node_features(state).flatten()
 
 
 def crate_spoilage_obs(state: GlobalState, crate) -> np.ndarray:

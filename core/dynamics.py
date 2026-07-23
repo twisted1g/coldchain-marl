@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import networkx as nx
 import numpy as np
 
 from core import config
@@ -20,7 +19,6 @@ from core.state import (
 )
 from core.world import demand
 from core.world.fruits import get_params
-from core.world.graph import sink_nodes, source_nodes
 from core.world.graph_features import node_delay
 from core.world.noise import NoiseModel
 from core.world.spoilage import ArrheniusSpoilage, risk_to_label
@@ -213,26 +211,6 @@ def _apply_delivery_action(
     _dispatch_orders(state)
 
 
-def _delivery_path(state: GlobalState, retail: str) -> list[str]:
-    """Weighted shortest route the truck actually drives, depot -> ... -> retail."""
-    try:
-        return nx.shortest_path(
-            state.graph, state.depot, retail, weight="base_transit_time"
-        )
-    except nx.NetworkXNoPath:
-        return [state.depot, retail]
-
-
-def _path_cost(state: GlobalState, path: list[str]) -> tuple[int, float]:
-    transit = 0
-    emissions = 0.0
-    for u, v in zip(path[:-1], path[1:], strict=True):
-        edge = state.graph.edges[u, v]
-        transit += int(np.ceil(edge["base_transit_time"]))
-        emissions += float(edge["base_emissions"])
-    return transit, emissions
-
-
 def _dispatch_orders(state: GlobalState) -> None:
     """First idle vehicle takes the queue head and drives the real graph path to
     the ordering retailer (all vehicles stage at the shared depot, so the paper's
@@ -357,13 +335,6 @@ def _deliver_vehicle(state: GlobalState, vehicle: VehicleState) -> None:
     vehicle.edge_ticks_left = 0
 
 
-def respawn_shipment(state: GlobalState) -> None:
-    """Deprecated (singleton elimination): the world no longer cycles a singleton
-    shipment. Kept as a no-op so rolling callers that still invoke it don't break
-    until they are repointed. See docs/singleton_elimination.md."""
-    return
-
-
 def _apply_spoilage_actions(state: GlobalState, actions: dict[str, Any]) -> None:
     """One spoilage agent per truck's crate (paper Alg 3): predict this crate's
     spoilage probability. Idle trucks are no-ops."""
@@ -406,32 +377,6 @@ def _node_external_temp(state: GlobalState, node: str) -> float:
     """External temperature a load at ``node`` fights — the node's own storage
     climate (Design F). Falls back to ambient if the node has no climate entry."""
     return state.node_temp_c.get(node, state.ambient_temp_c)
-
-
-def _advance_thermal_state(state: GlobalState) -> None:
-    s = state.shipment
-    diff = s.desired_temperature_c - s.sensor_temperature_c
-    external = _node_external_temp(state, s.current_node)
-    ambient_pull = (external - s.sensor_temperature_c) * 0.05
-    s.sensor_temperature_c = s.sensor_temperature_c + 0.5 * diff + ambient_pull
-
-
-def _advance_humidity(state: GlobalState) -> None:
-    s = state.shipment
-    pull = (state.ambient_humidity - s.sensor_humidity) * config.HUMIDITY_AMBIENT_PULL
-    noise = float(state.rng.normal(0.0, config.HUMIDITY_NOISE_SIGMA))
-    s.sensor_humidity = float(np.clip(s.sensor_humidity + pull + noise, 0.0, 1.0))
-
-
-def _advance_spoilage(state: GlobalState) -> None:
-    s = state.shipment
-    delay = node_delay(state, s.current_node)
-    delta = _spoilage_model.risk_delta(
-        s.fruit_type, s.sensor_temperature_c, s.sensor_humidity, delay, dt_ticks=1.0
-    )
-    s.spoilage_risk = float(np.clip(s.spoilage_risk + delta, 0.0, 1.0))
-    s.freshness_score = float(max(0.0, 1.0 - s.spoilage_risk))
-    s.age_ticks += 1
 
 
 def _advance_weather(state: GlobalState) -> None:
@@ -541,13 +486,6 @@ def _maybe_sample_disruption(state: GlobalState) -> None:
     new_disruption = noise.sample_disruption(state.graph)
     if new_disruption is not None:
         state.active_disruptions.append(new_disruption)
-
-
-def _update_energy(state: GlobalState) -> None:
-    s = state.shipment
-    external = _node_external_temp(state, s.current_node)
-    diff = abs(s.sensor_temperature_c - external)
-    state.energy_usage = diff * 0.1
 
 
 def _build_infos(state: GlobalState) -> dict[str, dict[str, Any]]:

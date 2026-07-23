@@ -45,7 +45,7 @@ def _node_features(
 ) -> np.ndarray:
     """GNN node grid for one spoilage subject: the subject's sensor reading sits at
     its current node, every other node shows its own storage micro-climate (Design
-    F). Shared by the singleton shipment and per-crate decentralised execution."""
+    F). The subject is the truck-borne crate (per-crate decentralised execution)."""
     fruit = float(_FRUIT_INDEX[fruit_type])
     rows: list[list[float]] = []
     for node in node_order(state.graph):
@@ -56,13 +56,6 @@ def _node_features(
             hum = state.node_humidity.get(node, state.ambient_humidity)
         rows.append([temp, hum, node_delay(state, node), fruit])
     return np.array(rows, dtype=np.float32)
-
-
-def spoilage_node_features(state: GlobalState) -> np.ndarray:
-    s = state.shipment
-    return _node_features(
-        state, s.current_node, s.sensor_temperature_c, s.sensor_humidity, s.fruit_type
-    )
 
 
 def crate_spoilage_node_features(state: GlobalState, crate) -> np.ndarray:

@@ -13,7 +13,7 @@ from core.config import (
     TEMPERATURE_AGENTS,
     FruitKey,
 )
-from core.dynamics import expected_lead_time, respawn_shipment
+from core.dynamics import expected_lead_time
 from core.interfaces.observations import all_obs
 from core.world.fruits import get_params
 from core.world.graph_features import node_delay
@@ -163,12 +163,11 @@ class ColdChainTrainingEnv(ColdChainParallelEnv):
         return obs, infos
 
     def rollover(self) -> dict[str, Any]:
-        """Live rolling inference: respawn the just-delivered shipment and keep
-        the same world running (inventory, vehicles, cargo, calendar persist).
-        Mirrors the obs pipeline of reset/step without a full reset and restores
-        the agent list the terminal step cleared. Returns the fresh observations.
+        """Live rolling inference: keep the same world running (inventory, vehicles,
+        cargo, calendar persist) past a terminal slot-span boundary. Mirrors the obs
+        pipeline of reset/step without a full reset and restores the agent list the
+        terminal step cleared. Returns the fresh observations.
         """
-        respawn_shipment(self._state)
         self.agents = list(self.possible_agents)
         obs = self._apply_forecast(all_obs(self._state))
         self._snapshot_prev()
