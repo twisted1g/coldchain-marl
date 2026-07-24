@@ -1,0 +1,209 @@
+import { useCallback, useEffect, useState } from "react";
+import { listEpisodes, loadEpisode } from "./api";
+import { useLiveStream } from "./hooks/useLiveStream";
+import { GraphView } from "./components/GraphView";
+import type { HoverTarget } from "./components/GraphView";
+import { HoverCard } from "./components/HoverCard";
+import { InventoryPanel } from "./components/InventoryPanel";
+import { AgentsPanel } from "./components/AgentsPanel";
+import { CargoPanel } from "./components/CargoPanel";
+import { NegotiationPanel } from "./components/NegotiationPanel";
+import { SystemBar } from "./components/SystemBar";
+import { StepBar } from "./components/StepBar";
+import { MediatorSwitch, type Mediator } from "./components/MediatorSwitch";
+import type { Episode, Tick } from "./types";
+
+const LIVE_SEED = 96_000;
+const LIVE_HORIZON = 60;
+
+/**
+ * Dashboard shell — components cleared for a rewrite.
+ *
+ * The data plumbing stays: episode list + loader, live SSE stream, and a
+ * current-tick pointer. Drop new components under <main> and feed them `meta`
+ * and `tick` (and `visibleTicks` for time-series). See src/api.ts + src/types.ts
+ * for the data contracts and src/Plot.tsx for the Plotly wrapper.
+ */
+export function App() {
+  const [episodes, setEpisodes] = useState<string[]>([]);
+  const [episode, setEpisode] = useState<Episode | null>(null);
+  const [mode, setMode] = useState<"episode" | "live">("episode");
+  const [index, setIndex] = useState(0);
+  const [status, setStatus] = useState("loading…");
+  const [playing, setPlaying] = useState(false);
+  const [mediator, setMediator] = useState<Mediator>("greedy");
+  const [hover, setHover] = useState<{
+    target: HoverTarget;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const live = useLiveStream();
+  const isLive = mode === "live";
+
+  const meta = isLive ? live.meta : episode?.meta ?? null;
+  const ticks = isLive ? live.ticks : episode?.ticks ?? [];
+  const clampedIndex = Math.min(index, Math.max(0, ticks.length - 1));
+  const tick: Tick | null = ticks[clampedIndex] ?? null;
+
+  const selectEpisode = useCallback(
+    async (name: string) => {
+      live.stop();
+      setMode("episode");
+      try {
+        const ep = await loadEpisode(name);
+        setEpisode(ep);
+        setIndex(0);
+        setPlaying(false);
+        setStatus(`${name} · ${ep.ticks.length} ticks`);
+      } catch (e) {
+        setStatus(`load failed · ${(e as Error).message}`);
+      }
+    },
+    [live],
+  );
+
+  // Start a rolling live inference with the chosen conflict solver. Called on
+  // "Live" and again whenever the mediator switch flips while already live, so
+  // the world restarts under the new solver.
+  const goLive = useCallback(
+    (m: Mediator) => {
+      setMode("live");
+      setPlaying(false);
+      live.start({ seed: LIVE_SEED, horizon: LIVE_HORIZON, mediator: m });
+    },
+    [live],
+  );
+
+  const stopLive = useCallback(() => {
+    live.stop();
+    setMode("episode");
+  }, [live]);
+
+  const changeMediator = useCallback(
+    (m: Mediator) => {
+      setMediator(m);
+      if (isLive) goLive(m);
+    },
+    [isLive, goLive],
+  );
+
+  useEffect(() => {
+    listEpisodes()
+      .then(({ episodes }) => {
+        setEpisodes(episodes);
+        if (episodes.length) selectEpisode(episodes[episodes.length - 1]);
+        else setStatus("no episodes recorded");
+      })
+      .catch((e) => setStatus(`API offline · ${e.message}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (isLive) setIndex(Math.max(0, live.ticks.length - 1));
+  }, [isLive, live.ticks.length]);
+
+  useEffect(() => {
+    if (isLive) setStatus(`live · ${mediator} · ${live.status}`);
+  }, [isLive, mediator, live.status]);
+
+  // Auto-advance the tick pointer while playing (episode mode only). Stops at
+  // the last tick. Every tick moves all agents together — the frame already
+  // holds each vehicle's state, so stepping renders them in parallel.
+  useEffect(() => {
+    if (!playing || isLive || ticks.length === 0) return;
+    const id = setInterval(() => {
+      setIndex((i) => {
+        if (i >= ticks.length - 1) {
+          setPlaying(false);
+          return i;
+        }
+        return i + 1;
+      });
+    }, 700);
+    return () => clearInterval(id);
+  }, [playing, isLive, ticks.length]);
+
+  return (
+    <>
+      <header className="topbar">
+        <div className="brand">
+          <span className="logo">❄</span>
+          <div>
+            <h1>Cold-Chain MARL</h1>
+            <span className="sub">cold-chain supply network</span>
+          </div>
+        </div>
+        <div className="controls">
+          <label className="field">
+            episode
+            <select
+              value={isLive ? "" : episode?.name ?? ""}
+              onChange={(e) => selectEpisode(e.target.value)}
+            >
+              <option value="" disabled>
+                {episodes.length ? "select…" : "none"}
+              </option>
+              {episodes.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </label>
+          <MediatorSwitch value={mediator} onChange={changeMediator} />
+          <button
+            className={isLive ? "livebtn on" : "livebtn"}
+            onClick={() => (isLive ? stopLive() : goLive(mediator))}
+          >
+            {isLive ? "■ stop" : "▶ live"}
+          </button>
+          <span className="status">{status}</span>
+        </div>
+      </header>
+
+      {meta ? (
+        <>
+        <SystemBar tick={tick} />
+        <StepBar
+          index={clampedIndex}
+          count={ticks.length}
+          playing={playing}
+          onIndex={(i) => {
+            setPlaying(false);
+            setIndex(i);
+          }}
+          onTogglePlay={() => setPlaying((p) => !p)}
+          tickLabel={
+            meta
+              ? `tick ${tick?.tick ?? 0} / ${meta.max_steps}`
+              : undefined
+          }
+        />
+        <main className="layout">
+          <GraphView
+            meta={meta}
+            tick={tick}
+            onHover={(target, x, y) => setHover({ target, x, y })}
+            onUnhover={() => setHover(null)}
+          />
+          <CargoPanel tick={tick} />
+          <div className="area-side">
+            <InventoryPanel tick={tick} />
+            <NegotiationPanel tick={tick} />
+          </div>
+          <AgentsPanel tick={tick} />
+          <HoverCard
+            target={hover?.target ?? null}
+            pos={hover ? { x: hover.x, y: hover.y } : null}
+            meta={meta}
+            tick={tick}
+          />
+        </main>
+        </>
+      ) : (
+        <main className="empty">
+          <p className="hint">{status}</p>
+        </main>
+      )}
+    </>
+  );
+}

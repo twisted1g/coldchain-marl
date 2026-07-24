@@ -43,10 +43,15 @@ INVENTORY_INIT_LEVEL: Final[float] = 0.3
 INVENTORY_DEMAND_MEAN: Final[float] = 0.15
 INVENTORY_RESTOCK_SCALE: Final[float] = 1.0
 INVENTORY_MIN_ORDER_QTY: Final[float] = 0.05
-# Scales restock delivery lead time so orders arrive+sell inside the 20-step
-# episode (raw transit ~5 left inventory boundary-dominated). ~0.4 -> lead ~2.
-RESTOCK_TRANSIT_SCALE: Final[float] = 0.4
 TRANSIT_SPOILAGE_RATE: Final[float] = 0.05
+
+# Delivery/inventory learn on a rolling world (the shipment respawns on
+# delivery instead of ending the episode), so restock trucks drive the real
+# multi-hop path in honest transit time rather than a scaled-down proxy.
+ROLLING_HORIZON: Final[int] = 40
+# Vehicles allowed to occupy one delivery slot before it is a conflict (Alg 5
+# "resource overuse"). 1 => any two trucks sharing a slot must negotiate.
+SLOT_CAPACITY: Final[int] = 1
 INVENTORY_RNG_OFFSET: Final[int] = 90_001
 
 DAYS_PER_YEAR: Final[int] = 365
@@ -76,6 +81,43 @@ HUMIDITY_AMBIENT_PULL: Final[float] = 0.15
 HUMIDITY_NOISE_SIGMA: Final[float] = 0.03
 HUMIDITY_SEVERITY_SCALE: Final[float] = 0.3
 DELAY_RISK_FACTOR: Final[float] = 0.5
+
+# Per-node micro-climate. Each node holds its own storage temperature/humidity,
+# mean-reverting toward a kind-specific setpoint and pulled toward ambient with a
+# kind-specific strength (cold rooms are well-refrigerated, so their ambient pull
+# is tiny), hard-clamped to a physically plausible band. This is the external
+# environment a load fights: node_climate[current_node] drives crate/shipment
+# thermal + energy, and feeds the spoilage GNN so its "risk across nodes" reasons
+# over real per-node conditions (paper Table 1: spoilage input is per-node T/H +
+# location) instead of flat ambient copies.
+NODE_CLIMATE_SETPOINT_C: Final[dict[str, float]] = {
+    "farm": 20.0,  # open-air handling, tracks ambient
+    "hub": 11.0,  # cool cross-dock
+    "dc": 3.0,  # refrigerated cold room
+    "retail": 5.0,  # display chiller
+}
+NODE_CLIMATE_BAND_C: Final[dict[str, tuple[float, float]]] = {
+    "farm": (5.0, 30.0),
+    "hub": (8.0, 14.0),
+    "dc": (0.0, 6.0),
+    "retail": (2.0, 8.0),
+}
+NODE_CLIMATE_HUMIDITY: Final[dict[str, float]] = {
+    "farm": 0.70,
+    "hub": 0.80,
+    "dc": 0.90,
+    "retail": 0.85,
+}
+NODE_CLIMATE_AMBIENT_PULL: Final[dict[str, float]] = {
+    "farm": 0.15,  # open air, follows outside temperature
+    "hub": 0.05,
+    "dc": 0.01,  # sealed cold room, barely feels ambient
+    "retail": 0.02,
+}
+NODE_CLIMATE_REVERSION: Final[float] = 0.2  # pull toward the kind setpoint
+NODE_CLIMATE_TEMP_SIGMA: Final[float] = 0.25  # mean-reverting temp noise (deg C)
+NODE_CLIMATE_HUMIDITY_SIGMA: Final[float] = 0.02
+NODE_CLIMATE_RNG_OFFSET: Final[int] = 777  # isolate climate noise from other streams
 
 
 class DisruptionType(StrEnum):
@@ -108,6 +150,44 @@ WEATHER_PRIORS: Final[dict[Weather, float]] = {
     Weather.RAINY: 0.15,
     Weather.STORMY: 0.05,
 }
+
+# Day-to-day weather evolution (one tick = one day). Weather is sticky — the
+# diagonal dominates — so a spell of sun or a passing storm plays out over several
+# days instead of a single frozen sample per episode (paper Sec 3: genAI simulates
+# changing/extreme weather). Rows are the current weather, values the next-day
+# distribution; each row sums to 1.
+WEATHER_TRANSITION: Final[dict[Weather, dict[Weather, float]]] = {
+    Weather.SUNNY: {
+        Weather.SUNNY: 0.70,
+        Weather.CLOUDY: 0.22,
+        Weather.RAINY: 0.06,
+        Weather.STORMY: 0.02,
+    },
+    Weather.CLOUDY: {
+        Weather.SUNNY: 0.30,
+        Weather.CLOUDY: 0.45,
+        Weather.RAINY: 0.20,
+        Weather.STORMY: 0.05,
+    },
+    Weather.RAINY: {
+        Weather.SUNNY: 0.15,
+        Weather.CLOUDY: 0.30,
+        Weather.RAINY: 0.40,
+        Weather.STORMY: 0.15,
+    },
+    Weather.STORMY: {
+        Weather.SUNNY: 0.10,
+        Weather.CLOUDY: 0.25,
+        Weather.RAINY: 0.35,
+        Weather.STORMY: 0.30,
+    },
+}
+# Ambient temperature is resampled each day: weather base + annual seasonal swing
+# + daily noise, clamped to a plausible outdoor range.
+AMBIENT_SEASONAL_AMPLITUDE_C: Final[float] = 6.0
+AMBIENT_DAILY_NOISE_SIGMA_C: Final[float] = 2.0
+AMBIENT_TEMP_RANGE_C: Final[tuple[float, float]] = (-5.0, 42.0)
+WEATHER_RNG_OFFSET: Final[int] = 555  # isolate weather noise from other streams
 
 DEMAND_WEATHER_MULT: Final[dict[Weather, float]] = {
     Weather.SUNNY: 1.3,
@@ -181,10 +261,24 @@ DELIVERY_AGENTS: Final[tuple[str, ...]] = tuple(
     f"delivery_{i}" for i in range(N_VEHICLES)
 )
 
+# Singleton elimination: routing / temperature / spoilage are now per-vehicle
+# first-class agents (one subject = one truck's crate), symmetric like inventory,
+# so a shared policy runs V handles. Idle trucks (no crate) mask to a zero obs /
+# no-op action / zero reward. See docs/singleton_elimination.md.
+ROUTING_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"routing_{i}" for i in range(N_VEHICLES)
+)
+TEMPERATURE_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"temperature_{i}" for i in range(N_VEHICLES)
+)
+SPOILAGE_AGENTS: Final[tuple[str, ...]] = tuple(
+    f"spoilage_{i}" for i in range(N_VEHICLES)
+)
+
 OBS_FIELDS_BY_AGENT: Final[dict[str, tuple[str, ...]]] = {
-    "routing": ROUTING_OBS_FIELDS,
-    "temperature": TEMPERATURE_OBS_FIELDS,
-    "spoilage": SPOILAGE_OBS_FIELDS,
+    **dict.fromkeys(ROUTING_AGENTS, ROUTING_OBS_FIELDS),
+    **dict.fromkeys(TEMPERATURE_AGENTS, TEMPERATURE_OBS_FIELDS),
+    **dict.fromkeys(SPOILAGE_AGENTS, SPOILAGE_OBS_FIELDS),
     **dict.fromkeys(INVENTORY_AGENTS, INVENTORY_OBS_FIELDS),
     **dict.fromkeys(DELIVERY_AGENTS, DELIVERY_OBS_FIELDS),
 }

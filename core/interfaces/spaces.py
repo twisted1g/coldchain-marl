@@ -11,19 +11,25 @@ from core.config import OBS_FIELDS_BY_AGENT
 def make_action_spaces() -> dict[str, gym.Space]:
     """Fresh spaces per call: seeding one env's spaces must not leak to others."""
     return {
-        "routing": Discrete(config.N_NEXT_NODES),
-        "temperature": Box(
-            low=config.TEMPERATURE_ACTION_LOW_C,
-            high=config.TEMPERATURE_ACTION_HIGH_C,
-            shape=(1,),
-            dtype=np.float32,
-        ),
-        "spoilage": Box(
-            low=config.SPOILAGE_ACTION_LOW,
-            high=config.SPOILAGE_ACTION_HIGH,
-            shape=(1,),
-            dtype=np.float32,
-        ),
+        **{name: Discrete(config.N_NEXT_NODES) for name in config.ROUTING_AGENTS},
+        **{
+            name: Box(
+                low=config.TEMPERATURE_ACTION_LOW_C,
+                high=config.TEMPERATURE_ACTION_HIGH_C,
+                shape=(1,),
+                dtype=np.float32,
+            )
+            for name in config.TEMPERATURE_AGENTS
+        },
+        **{
+            name: Box(
+                low=config.SPOILAGE_ACTION_LOW,
+                high=config.SPOILAGE_ACTION_HIGH,
+                shape=(1,),
+                dtype=np.float32,
+            )
+            for name in config.SPOILAGE_AGENTS
+        },
         **{
             name: Box(
                 low=config.INVENTORY_ACTION_LOW,

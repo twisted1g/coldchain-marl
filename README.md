@@ -1,113 +1,161 @@
 # Cold-Chain MARL
 
-Reproduction of the multi-agent RL core from Khanna et al., *Generative AI and
+Репродукция мультиагентного ядра из статьи Khanna et al., *Generative AI and
 Blockchain-Integrated Multi-Agent Framework for Resilient and Sustainable Fruit
-Cold-Chain Logistics* (Foods 2025, 14(17):3004). Five heterogeneous agents —
-routing, temperature, spoilage, inventory, delivery — trained with **centralized
-training, decentralized execution (CTDE)** on a synthetic farm-to-retail
-cold-chain environment, fidelity-first against the paper's Algorithm boxes 1-5.
+Cold-Chain Logistics* (Foods 2025, 14(17):3004). Синтетическая среда холодовой
+цепи «ферма → ретейл», поверх которой обучается набор разнородных агентов по
+схеме **централизованное обучение, децентрализованное исполнение (CTDE)**.
+Приоритет — верность боксам-алгоритмам статьи (Alg 1–6), а не «красивые» игрушки.
 
-## Status: MARL core complete
+Что уже собрано:
 
-All five agents live (verified trained-vs-random on held-out seeds, full joint run):
+- **MARL-ядро** — 16 агентов пяти типов (см. таблицу), обучены совместно на
+  TorchRL, проверены trained-vs-random на held-out сидах.
+- **Per-crate мир** — груз стал first-class субъектом на каждой машине (singleton
+  `shipment` устранён); routing/temperature/spoilage размножены до 3 инстансов
+  под shared-политикой (Alg 4 param sharing).
+- **GenAI-слой** — трансформер-форкастер спроса (offline-обучение, online через
+  буфер истории) + LLM-медиатор слот-конфликтов доставки (Alg 6, любой
+  OpenAI-совместимый эндпоинт).
+- **Веб-дашборд** — React/TS, живой SSE-стрим инференса, панели мира / агентов /
+  переговоров, переключатель conflict-solver greedy↔LLM.
 
-| Agent | Algorithm (paper box) | Action | Metric | Trained vs random |
-|-------|----------------------|--------|--------|-------------------|
-| temperature | DDPG (Alg 2) | continuous setpoint | temp_deviation | +98% |
-| routing | DQN (Alg 1, see deviations) | discrete next-hop | route_cost | +60% |
-| spoilage | frozen GraphSAGE encoder + DDPG head (Alg 3) | continuous risk threshold | fn_rate | +81% |
-| inventory | DDPG (Alg 4) | continuous order qty | inventory_cost | +76% |
-| delivery | MADDPG, shared centralized critic (Alg 5) | discrete schedule slot × 3 vehicles | delivery_cost | +43% |
+## Статус агентов
 
-Paper-wide mechanisms, implemented across all agents:
+| Агент | Алгоритм (бокс) | Действие | Инстансов | Метрика |
+|-------|-----------------|----------|-----------|---------|
+| temperature | DDPG (Alg 2) | сетпоинт рефрижератора | 3 (по машине) | temp_deviation |
+| routing | DQN (Alg 1) | следующий узел | 3 (по машине) | route_cost |
+| spoilage | frozen GraphSAGE + DDPG (Alg 3) | порог риска | 3 (по машине) | fn_rate |
+| inventory | DDPG (Alg 4, shared) | объём заказа | 4 (по ретейлеру) | inventory_cost |
+| delivery | MADDPG, shared critic (Alg 5) | слот расписания | 3 (по машине) | delivery_cost |
 
-- **Dynamic context-aware Pareto weights** `ω_j = c_j / Σ c_k` in every reward
-  (each Alg box's "Context-Aware Weights"); static priority coefficients folded
-  into the weighted cost terms.
-- **Shared intention buffer + coordination penalty ρ** (`core/intention.py`):
-  declare → detect conflicts → ρ → clear, each step. Delivery vehicles are the
-  live conflict source (slot collisions); trained vehicles learn distinct slots
-  (conflict rate 0.00).
-- **CTDE**: every agent acts on local observations; only delivery uses a shared
-  critic `Q(joint_obs, joint_act)`, per Alg 5.
+Последний совместный прогон (full 150 итераций): **temperature +97%**,
+**spoilage +84%**, routing резко бьёт random. **delivery** и **inventory** после
+per-crate ретрейна регрессируют (delivery — связка дедлайна со слотом,
+inventory — bound-saturation актора) и донастраиваются — детали и план в
+`docs/TODO.md` и `docs/status/`.
 
-## Run
+Механизмы, общие для всех агентов:
 
+- **Динамические Парето-веса** `ω_j = c_j / Σ c_k` в каждой награде.
+- **Общий intention-buffer + штраф координации ρ** (`core/intention.py`):
+  declare → detect → ρ → clear каждый шаг; живой источник конфликтов — слоты
+  доставки.
+- **CTDE**: агент действует по локальным наблюдениям; общий critic
+  `Q(joint_obs, joint_act)` — только у delivery (Alg 5).
+
+Детерминизм: один сид → бит-в-бит идентичный прогон. Inventory-спрос и delivery
+используют изолированные RNG-потоки — добавление агента не сдвигает миры
+остальных.
+
+## Установка
+
+```bash
+uv sync                    # рантайм-зависимости
+uv sync --group notebook   # + Jupyter/pandas/matplotlib для ноутбуков
+uv sync --group dev        # + ruff/mypy
 ```
-uv run python -m training.marl.train                                   # full joint run (all 5)
-uv run python -m training.marl.train --agents temperature routing      # subset
-uv run python -m training.marl.train --agents delivery_0 delivery_1 delivery_2   # delivery group
-uv run python -m training.marl.pretrain_spoilage                       # regen GNN encoder artifact
-uv run ruff check core env training data
+
+Требуется Python ≥ 3.12. Стек: PyTorch + **TorchRL** (лоссы/replay/soft-update) +
+рукописный MADDPG и CTDE-цикл, torch-geometric для spoilage-GNN. Без Ray/RLlib.
+
+## Запуск и работа с моделями
+
+Обучение (пишет кривые в `artifacts/reward_curve.csv`, модули в
+`artifacts/modules/`, печатает trained-vs-random по каждому обучаемому):
+
+```bash
+# полный совместный прогон всех агентов
+uv run python -m training.marl.train
+
+# подмножество типов
+uv run python -m training.marl.train --agents temperature routing
+
+# группа доставки (три машины — одна MADDPG-группа)
+uv run python -m training.marl.train --agents delivery_0 delivery_1 delivery_2
+
+# дообучение из существующих чекпоинтов + сохранение под суффиксом
+uv run python -m training.marl.train --agents inventory_0 --load --tag scn05
+
+# со сценариями сбоев из LLM-банка (доля эпизодов со сбоем)
+uv run python -m training.marl.train --scenario-bank data/scenarios/bank.json --scenario-prob 0.5
+
+# с онлайн-прогнозом спроса от трансформера
+uv run python -m training.marl.train --forecaster
+
+# rolling-мир (длинный горизонт, реститок) — для delivery/inventory
+uv run python -m training.marl.train --rolling
+
+# дешёвый smoke (few iters, ловит коллапсы, не финальное качество)
+uv run python -m training.marl.train --iters 40 --tag smoke
 ```
 
-Training writes learning curves to `artifacts/reward_curve.csv` and agent modules
-to `artifacts/modules/`, then prints trained-vs-random margins per learner
-(delivery evaluated as one block — the three vehicles share one MADDPG group).
+Оценка и диагностика:
 
-## Notebooks
+```bash
+uv run python -m training.marl.evaluate          # trained-vs-random по блокам
+uv run python -m training.marl.fingerprint       # obs-хэши: контроль детерминизма
+uv run python -m training.marl.stress_eval       # деградация по банку сбоев
+uv run python -m training.marl.negotiation_eval --greedy --episodes 2   # медиатор Alg 6, без LLM
+```
 
-- `notebooks/training_report.ipynb` — per-learner curves, trained-vs-random bars,
-  delivery coordination panel (slot histograms, conflict/SLA rates).
-- `notebooks/agent_behavior.ipynb` — one greedy episode, **trained vs random on
-  the same seed** side by side: temperature-vs-band, route on the supply graph
-  (with transit-shortest and Alg1-cost-shortest baselines + path-cost analysis),
-  spoilage prediction tracking, inventory control, delivery slot coordination,
-  cumulative returns.
-- `notebooks/dataset_report.ipynb` — offline synthetic dataset summary.
+LLM-медиатор переговоров (Alg 6) с реальной моделью — поднять локальный
+OpenAI-совместимый сервер (например LM Studio на `:1234`), затем:
 
-## Architecture
+```bash
+export LLM_MODEL="<id-модели>"
+uv run python -m training.marl.negotiation_eval --episodes 2   # без --greedy → LLM-путь
+```
 
-- `core/` — framework-agnostic domain logic: config, state (shipment + per-vehicle
-  `VehicleState`), dynamics, Arrhenius spoilage, supply graph, observations,
-  spaces, disruption noise, `IntentionBuffer`.
-- `env/` — `ColdChainParallelEnv` (PettingZoo) and `ColdChainTrainingEnv`
-  (per-agent reward methods live on the env class, including the dynamic-Pareto
-  weighting).
-- `training/` — `agents.py` (Agent protocol, `FrozenAgent`, `RandomAgent`,
-  `DDPGAgent`, `DQNAgent`, `SpoilageAgent`), `maddpg.py` (`MADDPGDelivery`
-  shared-critic group + per-vehicle `DeliveryHandle`), `gnn.py` +
-  `pretrain_spoilage.py` (GraphSAGE encoder), `loop.py` (CTDE loop), `config.py`
-  (per-agent algorithm registry), `evaluate.py`, `train.py`.
-- `data/` — offline synthetic dataset (generation, schema, loader).
+Веб-дашборд (сборка фронта → запуск API + статики):
 
-Stack: PyTorch + **TorchRL** loss modules / replay buffers (`DDPGLoss`, `DQNLoss`,
-`TensorDictReplayBuffer`, `SoftUpdate`) plus a hand-built MADDPG (TorchRL has no
-turnkey MADDPG loss), driven by a hand-written CTDE loop. torch-geometric for the
-spoilage GNN. No Ray/RLlib.
+```bash
+cd viz/web && npm install && npm run build && cd ../..
+uv run python -m viz.serve        # http://127.0.0.1:8000 (web :8000, api :8001)
+```
 
-Determinism: same seed → bit-identical runs. Inventory demand and delivery use
-isolated RNG streams (dedicated generator / torch RNG only), so adding an agent
-never perturbs the others' worlds.
+В live-режиме дашборд стримит свежий инференс по SSE; переключатель
+conflict-solver (greedy↔LLM) на лету рестартит стрим под новым медиатором.
+Для разработки фронта — `npm run dev` в `viz/web` рядом с `uv run python -m viz.api`.
 
-## Deviations from the paper (documented)
+Записать эпизод в JSONL и отрисовать gif без веб-стека:
 
-- **routing**: paper uses *tabular* Q-learning (Alg 1); impl uses **DQN** —
-  tabular discretization of the routing observation is impractical.
-- **Non-paper reward shaping** (load-bearing, kept outside the Pareto term):
-  routing delivery bonus (Alg 1 reward is pure penalty; the bonus is the only
-  positive signal preventing wait-forever), temperature deviation term + step
-  penalty (Alg 2 lists only energy + spoilage).
-- **Dynamic-weight form**: literal `−Σ ω_j·raw_j` degenerates in sim units
-  (emissions dominate); implemented as `−Σ ω_j·c_j` with the static priority
-  coefficients folded into `c_j = α_j·raw_j`.
-- **Delivery scope**: n vehicles are a scoped scheduling group over the shared
-  single-shipment world (retailer tasks + scenario-derived routes), not a
-  multi-shipment fleet — matches Alg 5's "agents = vehicle controllers" without a
-  core sim rewrite. Gumbel-softmax discrete actors (paper does not specify the
-  discrete-actor mechanism).
-- **Intention buffer scope**: the paper's buffer coordinates instances of the
-  same agent type; in this scoped world only delivery is multi-instance, so it is
-  the sole live conflict source — the other four declare into the buffer but
-  cannot conflict by definition.
-- Known deferred items: temperature observation lacks `T_ambient` + `fruit_type`
-  (paper state), inventory observation carries a redundant static
-  `predicted_demand`, routing action aliasing (`idx % out_edges`; masked DQN is
-  the fix).
+```bash
+uv run python -m viz.record --seed 90000 --episodes 1 > episode.jsonl
+uv run python -m viz.dashboard episode.jsonl
+```
 
-## Not in scope yet (next phases)
+## Структура
 
-GenAI layer (transformer demand forecast + LLM disruption/negotiation, Alg 6-7),
-blockchain layer (Solidity contracts, Alg 8-18), model serving + containerization,
-and final integration against the paper's claimed numbers (−50% spoilage, −35%
-energy, −25% emissions, −30% travel).
+- `core/` — доменная логика без привязки к фреймворку: конфиг, состояние
+  (`GlobalState` + per-vehicle `VehicleState` с `load`-грузом), динамика,
+  Аррениусова порча, граф поставок, наблюдения, пространства действий, шум
+  сбоев, `IntentionBuffer`, per-node микро-климат.
+- `env/` — `ColdChainParallelEnv` (PettingZoo) и `ColdChainTrainingEnv`
+  (методы наград на классе среды, включая динамические Парето-веса).
+- `training/` — `marl/` (агенты, MADDPG, GNN, CTDE-цикл `loop.py`, реестр
+  алгоритмов `config.py`, `train.py`, `evaluate.py`, `fingerprint.py`,
+  `stress_eval.py`, `negotiation_eval.py`) и `forecaster/` (трансформер спроса).
+- `llm/` — провайдер-независимый клиент, генератор банка сбоев, медиатор и
+  протокол переговоров (Alg 6), реплей сценариев.
+- `data/` — генерация и загрузка синтетического датасета, банк сценариев.
+- `viz/` — инференс-раннер, запись эпизодов, matplotlib-дашборд, SSE-API и
+  React/TS-фронтенд (`viz/web/`).
+- `docs/` — `DONE.md` / `TODO.md`, дизайн-доки, журнал состояния `status/` и
+  `development_guide.md` (как построить систему с нуля: архитектура фаза за фазой,
+  дизайн-решения, карта на алгоритмы статьи).
+- `notebooks/` — `dataset_report`, `training_report`, `agent_behavior`.
+
+## Отклонения от статьи (задокументированы)
+
+- **routing**: в статье табличный Q-learning (Alg 1), в реализации — **DQN**
+  (табличная дискретизация наблюдения непрактична).
+- **Форма динамических весов**: буквальное `−Σ ω_j·raw_j` вырождается в симуляции
+  (эмиссии доминируют); реализовано как `−Σ ω_j·c_j` со статическими
+  приоритетами, свёрнутыми в `c_j = α_j·raw_j`.
+- **Не-из-статьи shaping** (несущий, вне Парето-члена): routing delivery-бонус
+  (награда Alg 1 — чистый штраф), temperature deviation-член + step-penalty.
+- **Intention-buffer**: в статье координирует инстансы одного типа; здесь живой
+  конфликт — только слоты доставки, остальные декларируют, но по построению не
+  конфликтуют.

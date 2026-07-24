@@ -9,7 +9,13 @@ import hashlib
 import numpy as np
 import torch
 
-from core.config import DELIVERY_AGENTS, INVENTORY_AGENTS
+from core.config import (
+    DELIVERY_AGENTS,
+    INVENTORY_AGENTS,
+    ROUTING_AGENTS,
+    SPOILAGE_AGENTS,
+    TEMPERATURE_AGENTS,
+)
 from env.training_env import ColdChainTrainingEnv
 from llm.scenarios import load_bank
 from training.config import (
@@ -25,9 +31,9 @@ np.random.seed(0)
 torch.manual_seed(0)
 
 BLOCKS = {
-    "temperature": ["temperature"],
-    "routing": ["routing"],
-    "spoilage": ["spoilage"],
+    "temperature": list(TEMPERATURE_AGENTS),
+    "routing": list(ROUTING_AGENTS),
+    "spoilage": list(SPOILAGE_AGENTS),
     "inventory": list(INVENTORY_AGENTS),
     "delivery": list(DELIVERY_AGENTS),
 }
@@ -47,7 +53,7 @@ for name, block in BLOCKS.items():
     print(f"{name:<12} return={ret:.6f} {metric_key}={met:.6f}")
 
 print("== frozen obs-stream hash, clean episode ==")
-env = ColdChainTrainingEnv(env_config(4242, ["temperature"]))
+env = ColdChainTrainingEnv(env_config(4242, list(TEMPERATURE_AGENTS)))
 agents = build_agents(env, [])
 obs, _ = env.reset()
 h = hashlib.sha256()
@@ -63,7 +69,7 @@ print("clean:", h.hexdigest())
 
 print("== frozen obs-stream hash, every 7th scenario ==")
 bank = load_bank("data/scenarios/bank.json")
-cfg = env_config(4242, ["temperature", "inventory_0"])
+cfg = env_config(4242, [*TEMPERATURE_AGENTS, "inventory_0"])
 cfg["scenario_bank"] = "data/scenarios/bank.json"
 env = ColdChainTrainingEnv(cfg)
 agents = build_agents(env, [])

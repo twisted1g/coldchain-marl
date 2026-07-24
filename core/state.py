@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 
 import networkx as nx
 import numpy as np
@@ -8,7 +9,6 @@ import numpy as np
 from core import config
 from core.config import FruitKey, Weather
 from core.world import demand
-from core.world.fruits import get_params
 from core.world.graph import build_supply_chain, sink_nodes, source_nodes
 from core.world.noise import Disruption
 
@@ -28,7 +28,13 @@ _AMBIENT_HUMIDITY_BY_WEATHER: dict[Weather, float] = {
 
 
 @dataclass(slots=True)
-class Shipment:
+class Consignment:
+    """A crate of perishable goods with its own thermal + spoilage state.
+
+    A crate rides each delivery vehicle (``VehicleState.load``); routing,
+    temperature and spoilage are per-crate (singleton elimination).
+    """
+
     fruit_type: FruitKey
     current_node: str
     target_node: str
@@ -40,6 +46,12 @@ class Shipment:
     sensor_humidity: float
     desired_temperature_c: float
     freshness_score: float
+    # per-crate spoilage prediction from the spoilage policy (CTDE execution);
+    # 0.0 until a prediction is made.
+    spoilage_prediction: float = 0.0
+    # per-crate reefer energy (|crate temp - node climate| * scale), set each tick
+    # while in transit; feeds the per-crate temperature reward.
+    energy: float = 0.0
 
 
 @dataclass(slots=True)
@@ -54,6 +66,19 @@ class VehicleState:
     emissions: float
     sla_violated: bool
     conflict: bool
+    # Physical position on the graph: an in-transit truck steps one edge at a
+    # time (``edge_ticks_left`` counts down the current edge's transit), moving
+    # depot -> hub -> dc -> retail exactly like the cold-chain shipment.
+    current_node: str = ""
+    route: list[str] = field(default_factory=list)
+    edge_ticks_left: int = 0
+    carrying: Cargo | None = None
+    # The crate riding this vehicle (multi-instance redesign). ``None`` = empty.
+    load: Consignment | None = None
+    # Tick by which this trip must arrive (from the chosen delivery slot). Set at
+    # dispatch; delay / SLA are measured against it when the truck actually arrives,
+    # since routing now drives the (variable) path (singleton elimination).
+    sla_deadline: float = 0.0
 
 
 @dataclass(slots=True)
@@ -74,7 +99,10 @@ class GlobalState:
     max_steps: int
     rng: np.random.Generator
     graph: nx.DiGraph
-    shipment: Shipment
+    depot: str
+    # World fruit (single-fruit for now; per-crate fruit heterogeneity is a
+    # follow-up). Replaces the removed singleton shipment's fruit_type.
+    fruit: FruitKey
     active_disruptions: list[Disruption]
     ambient_weather: Weather
     ambient_temp_c: float
@@ -98,18 +126,28 @@ class GlobalState:
     demand_shock_mult: float
     histories: list[demand.DemandSeries]
     demand_forecast: list[float]
-    energy_usage: float
     fault_signals: int
-    route_travel_time: float
-    route_emissions: float
-    spoilage_prediction: float
     vehicles: list[VehicleState]
+    # Per-node micro-climate: each node's own storage temperature/humidity, drifting
+    # within a kind-specific band. node_climate_rng isolates this noise so the demand
+    # and disruption streams stay bit-identical.
+    node_temp_c: dict[str, float]
+    node_humidity: dict[str, float]
+    node_climate_rng: np.random.Generator
+    # Day-to-day weather evolution: ambient weather/temp/humidity are re-rolled each
+    # tick (day) via a sticky Markov chain, so a hot spell or storm plays out over
+    # days instead of a single frozen sample. Own rng keeps other streams stable.
+    weather_rng: np.random.Generator
+    # When set, a delivered shipment respawns instead of ending the episode, so
+    # the world rolls on and restock trucks complete real multi-tick trips.
+    rolling: bool = False
 
 
 def init_state(
     seed: int | None = None,
     max_steps: int | None = None,
     fruit: FruitKey | None = None,
+    rolling: bool = False,
 ) -> GlobalState:
     base_seed = config.DEFAULT_SEED if seed is None else seed
     rng = np.random.default_rng(base_seed)
@@ -123,29 +161,14 @@ def init_state(
     fruits = list(FruitKey)
     fruit = fruit if fruit is not None else fruits[int(rng.integers(0, len(fruits)))]
     source = str(rng.choice(source_nodes(graph)))
-    target = str(rng.choice(sink_nodes(graph)))
-
-    params = get_params(fruit)
-    desired_temp = params.optimal_temp_c
-
-    shipment = Shipment(
-        fruit_type=fruit,
-        current_node=source,
-        target_node=target,
-        spoilage_risk=0.0,
-        ground_truth_label=0,
-        age_ticks=0,
-        perishability_index=1.0 / params.base_shelf_life_ticks,
-        sensor_temperature_c=desired_temp,
-        sensor_humidity=0.85,
-        desired_temperature_c=desired_temp,
-        freshness_score=1.0,
-    )
+    # Preserve the RNG draw the eliminated singleton's target node consumed, so the
+    # world stream (weather / disruptions / demand) stays bit-identical to the seeds
+    # the policies were trained on (singleton elimination).
+    rng.choice(sink_nodes(graph))
 
     weather = demand.sample_weather(rng)
     ambient_temp = _sample_ambient_temp(rng, weather)
     ambient_humidity = _sample_ambient_humidity(rng, weather)
-    shipment.sensor_humidity = ambient_humidity
 
     inventory_rng = np.random.default_rng(base_seed + config.INVENTORY_RNG_OFFSET)
     day_of_year = int(inventory_rng.integers(0, config.DAYS_PER_YEAR))
@@ -175,23 +198,26 @@ def init_state(
         )
 
     retailers = sink_nodes(graph)
-    # Restock lead time (transit) is scaled down so an order can arrive AND be
-    # sold within the paper's 10-20 step episode: at raw transit ~5 in a 20-step
-    # horizon, ~5 ticks are pipeline-fill stockout and the last ~5 ticks of
-    # orders arrive after the episode ends, leaving inventory boundary-dominated.
-    # Emissions (carbon) are unscaled — this models faster restock vehicles, not
-    # relocated retailers. Only inventory/delivery read retailer_transit.
-    retailer_costs = [
-        (t * config.RESTOCK_TRANSIT_SCALE, e)
-        for t, e in (_route_cost(graph, source, r) for r in retailers)
-    ]
+    # The fleet stages at the source farm (the depot) and drives the real
+    # weighted shortest path to each retailer. Transit is the honest summed edge
+    # time — no scaling — because delivery/inventory train on the rolling horizon
+    # where a full trip fits. Only inventory/delivery read retailer_transit.
+    depot = source
+    retailer_costs = [_route_cost(graph, depot, r) for r in retailers]
+
+    node_climate_rng = np.random.default_rng(
+        base_seed + config.NODE_CLIMATE_RNG_OFFSET
+    )
+    node_temp_c, node_humidity = _init_node_climate(graph, node_climate_rng)
+    weather_rng = np.random.default_rng(base_seed + config.WEATHER_RNG_OFFSET)
 
     return GlobalState(
         tick=0,
         max_steps=n_steps,
         rng=rng,
         graph=graph,
-        shipment=shipment,
+        depot=depot,
+        fruit=fruit,
         active_disruptions=[],
         ambient_weather=weather,
         ambient_temp_c=ambient_temp,
@@ -215,13 +241,32 @@ def init_state(
         demand_shock_mult=1.0,
         histories=histories,
         demand_forecast=[config.INVENTORY_DEMAND_MEAN] * config.N_INVENTORY_INSTANCES,
-        energy_usage=0.0,
         fault_signals=0,
-        route_travel_time=0.0,
-        route_emissions=0.0,
-        spoilage_prediction=0.0,
-        vehicles=_init_vehicles(retailers, retailer_costs, n_steps),
+        vehicles=_init_vehicles(retailers, retailer_costs, n_steps, depot),
+        node_temp_c=node_temp_c,
+        node_humidity=node_humidity,
+        node_climate_rng=node_climate_rng,
+        weather_rng=weather_rng,
+        rolling=rolling,
     )
+
+
+def _init_node_climate(
+    graph: nx.DiGraph, rng: np.random.Generator
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Seed each node at its kind setpoint (temp jittered, humidity at target),
+    clamped to the kind band. Nodes then drift via ``_advance_node_climate``."""
+    temps: dict[str, float] = {}
+    humidity: dict[str, float] = {}
+    for node, data in graph.nodes(data=True):
+        kind = data["kind"]
+        lo, hi = config.NODE_CLIMATE_BAND_C[kind]
+        seed_t = config.NODE_CLIMATE_SETPOINT_C[kind] + float(
+            rng.normal(0.0, config.NODE_CLIMATE_TEMP_SIGMA)
+        )
+        temps[node] = float(np.clip(seed_t, lo, hi))
+        humidity[node] = config.NODE_CLIMATE_HUMIDITY[kind]
+    return temps, humidity
 
 
 def _redraw_demand(
@@ -241,9 +286,12 @@ def _redraw_demand(
 
 
 def _init_vehicles(
-    retailers: list[str], retailer_costs: list[tuple[float, float]], n_steps: int
+    retailers: list[str],
+    retailer_costs: list[tuple[float, float]],
+    n_steps: int,
+    depot: str,
 ) -> list[VehicleState]:
-    """Vehicles idle at the source; per-trip route fields hold the default
+    """Vehicles idle at the depot; per-trip route fields hold the default
     retailer's costs until the first dispatch overwrites them."""
     vehicles: list[VehicleState] = []
     for i in range(config.N_VEHICLES):
@@ -262,6 +310,7 @@ def _init_vehicles(
                 emissions=0.0,
                 sla_violated=False,
                 conflict=False,
+                current_node=depot,
             )
         )
     return vehicles
@@ -281,8 +330,21 @@ def _route_cost(graph: nx.DiGraph, source: str, target: str) -> tuple[float, flo
     return transit, emissions
 
 
-def _sample_ambient_temp(rng: np.random.Generator, weather: Weather) -> float:
-    return _AMBIENT_BASE_TEMP_C[weather] + float(rng.normal(0.0, 3.0))
+def _sample_ambient_temp(
+    rng: np.random.Generator, weather: Weather, day_of_year: int = 0
+) -> float:
+    """Outdoor temperature for the day: weather base + annual seasonal swing +
+    daily noise, clamped to a plausible range."""
+    season = config.AMBIENT_SEASONAL_AMPLITUDE_C * math.sin(
+        2.0 * math.pi * day_of_year / config.DAYS_PER_YEAR
+    )
+    lo, hi = config.AMBIENT_TEMP_RANGE_C
+    raw = (
+        _AMBIENT_BASE_TEMP_C[weather]
+        + season
+        + float(rng.normal(0.0, config.AMBIENT_DAILY_NOISE_SIGMA_C))
+    )
+    return float(np.clip(raw, lo, hi))
 
 
 def _sample_ambient_humidity(rng: np.random.Generator, weather: Weather) -> float:

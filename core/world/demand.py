@@ -26,6 +26,16 @@ def sample_weather(rng: np.random.Generator) -> Weather:
     return weathers[int(rng.choice(len(weathers), p=probs))]
 
 
+def advance_weather(rng: np.random.Generator, current: Weather) -> Weather:
+    """One day of weather evolution: draw the next day from the sticky transition
+    row of the current weather (paper Sec 3: simulate changing/extreme weather)."""
+    weathers = list(Weather)
+    row = config.WEATHER_TRANSITION[current]
+    probs = np.array([row[w] for w in weathers], dtype=float)
+    probs /= probs.sum()
+    return weathers[int(rng.choice(len(weathers), p=probs))]
+
+
 def demand_mean(
     day_of_year: int, weekday: int, weather: Weather, event_mult: float
 ) -> float:

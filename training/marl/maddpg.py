@@ -11,7 +11,7 @@ from tensordict import TensorDict
 from torch import nn
 from torchrl.data import LazyTensorStorage, TensorDictReplayBuffer
 
-from training.marl.agents import QNet, linear_decay, mlp
+from training.marl.agents import DEVICE, QNet, linear_decay, mlp
 
 
 class MADDPGDelivery:
@@ -31,6 +31,8 @@ class MADDPGDelivery:
             p.requires_grad_(False)
         for p in self._target_critic.parameters():
             p.requires_grad_(False)
+        for net in (self._actors, self._critic, self._target_actors, self._target_critic):
+            net.to(DEVICE)
 
         self._actor_opt = torch.optim.Adam(self._actors.parameters(), lr=cfg["lr"])
         self._critic_opt = torch.optim.Adam(self._critic.parameters(), lr=cfg["lr"])
@@ -56,7 +58,7 @@ class MADDPGDelivery:
         )
 
     def act(self, i: int, obs: np.ndarray, *, explore: bool) -> np.integer:
-        td_obs = torch.as_tensor(obs, dtype=torch.float32)
+        td_obs = torch.as_tensor(obs, dtype=torch.float32, device=DEVICE)
         with torch.no_grad():
             logits = self._actors[i](td_obs)
             if explore:
@@ -111,7 +113,7 @@ class MADDPGDelivery:
         if len(self._rb) < self._warmup:
             return {}
 
-        batch = self._rb.sample(self._batch_size)
+        batch = self._rb.sample(self._batch_size).to(DEVICE)
         obs = batch["obs"]
         act = batch["act"]
         reward = batch["reward"]
@@ -177,7 +179,7 @@ class MADDPGDelivery:
         )
 
     def load(self, path: Path) -> None:
-        ckpt = torch.load(path / "maddpg.pt", weights_only=True)
+        ckpt = torch.load(path / "maddpg.pt", weights_only=True, map_location=DEVICE)
         self._actors.load_state_dict(ckpt["actors"])
         self._critic.load_state_dict(ckpt["critic"])
         self._target_actors.load_state_dict(self._actors.state_dict())
@@ -208,7 +210,10 @@ class DeliveryHandle:
         )
 
     def update(self) -> dict[str, float]:
-        return self._group.update()
+        # All vehicles share one group; index 0 drives the single gradient step
+        # per env step (the other handles already fed the shared buffer via
+        # observe), matching SharedHandle and the comment there.
+        return self._group.update() if self._index == 0 else {}
 
     def save(self, path: Path) -> None:
         if self._index == 0:
